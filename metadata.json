@@ -1,0 +1,6 @@
+{
+  "name": "FrontDesk AI — Bright Roots Dental",
+  "description": "Patient front desk chat and staff ticket queue for Bright Roots Dental in Banjara Hills, Hyderabad.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
