@@ -9,11 +9,12 @@ import {
   X,
 } from 'lucide-react';
 import { CLINIC_DATA } from '../data/clinicData';
-import type { AppointmentRequest, LanguageCode } from '../types/clinic';
+import type { AppointmentRequest, ClinicDoctor, LanguageCode } from '../types/clinic';
 
 interface BookingFlowCardProps {
   sessionId: string;
   language: LanguageCode;
+  doctors: ClinicDoctor[];
   onClose: () => void;
   onSubmitted: (appt: AppointmentRequest) => void;
 }
@@ -52,12 +53,6 @@ const REASONS: ReasonOption[] = [
   },
 ];
 
-const DOCTOR_ALLOWED_DAYS: Record<string, number[]> = {
-  'Dr. Meera Nair': [1, 2, 3, 4, 5, 6], // Mon-Sat
-  'Dr. Imran Qureshi': [2, 4, 6], // Tue, Thu, Sat
-  'Dr. Sneha Rao': [6], // Sat only
-};
-
 const TIME_SLOTS = [
   { label: '9:30 am', hour: 9, minute: 30 },
   { label: '10:30 am', hour: 10, minute: 30 },
@@ -69,31 +64,23 @@ const TIME_SLOTS = [
   { label: '7:00 pm', hour: 19, minute: 0 },
 ];
 
-function getValidDatesForDoctor(doctorName: string): { dateISO: string; label: string }[] {
-  const allowedDays = DOCTOR_ALLOWED_DAYS[doctorName] ?? [1, 2, 3, 4, 5, 6];
+function getValidDatesForDoctor(
+  doctorName: string,
+  doctors: ClinicDoctor[],
+): { dateISO: string; label: string }[] {
+  const doc = doctors.find((d) => d.name === doctorName);
+  const allowedDayNames = new Set(doc?.activeDays ?? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
   const results: { dateISO: string; label: string }[] = [];
 
-  // Start from today in IST
   const now = new Date();
   for (let offset = 0; offset < 28 && results.length < 6; offset++) {
     const candidate = new Date(now.getTime() + offset * 86400000);
-    const istStr = candidate.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // YYYY-MM-DD
+    const istStr = candidate.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
     const dayName = candidate.toLocaleDateString('en-US', {
       timeZone: 'Asia/Kolkata',
       weekday: 'short',
     });
-    const dayMap: Record<string, number> = {
-      Sun: 0,
-      Mon: 1,
-      Tue: 2,
-      Wed: 3,
-      Thu: 4,
-      Fri: 5,
-      Sat: 6,
-    };
-    const dow = dayMap[dayName] ?? 1;
-    // Block Sundays (dow === 0) and non-working days for the doctor
-    if (dow === 0 || !allowedDays.includes(dow)) continue;
+    if (dayName === 'Sun' || !allowedDayNames.has(dayName)) continue;
 
     const niceDate = candidate.toLocaleDateString('en-IN', {
       timeZone: 'Asia/Kolkata',
@@ -148,6 +135,7 @@ function downloadICS(appt: AppointmentRequest): void {
 export function BookingFlowCard({
   sessionId,
   language,
+  doctors,
   onClose,
   onSubmitted,
 }: BookingFlowCardProps) {
@@ -163,8 +151,8 @@ export function BookingFlowCard({
   const [submittedAppt, setSubmittedAppt] = useState<AppointmentRequest | null>(null);
 
   const validDates = useMemo(
-    () => (doctorName ? getValidDatesForDoctor(doctorName) : []),
-    [doctorName],
+    () => (doctorName ? getValidDatesForDoctor(doctorName, doctors) : []),
+    [doctorName, doctors],
   );
 
   const heading =
@@ -303,12 +291,12 @@ export function BookingFlowCard({
             </p>
           )}
           <div className="space-y-2">
-            {CLINIC_DATA.doctors.map((doc) => {
+            {doctors.map((doc) => {
               const isSuggested = doc.name === reason.suggestedDoctor;
               const disabled = reason.id === 'child' && doc.name !== 'Dr. Sneha Rao';
               return (
                 <button
-                  key={doc.name}
+                  key={doc.id}
                   type="button"
                   disabled={disabled}
                   onClick={() => handleSelectDoctor(doc.name)}

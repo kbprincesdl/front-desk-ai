@@ -7,15 +7,24 @@ import { fileURLToPath } from 'url';
 import { CLINIC_DATA } from './src/data/clinicData.ts';
 import { generateFrontDeskReply } from './src/server/assistant.ts';
 import {
+  addCustomerFeedback,
+  addDoctor,
   addStaffReply,
   appendSessionMessage,
   createAppointment,
   createTicket,
+  deleteDoctor,
+  getAdminAnalytics,
   getSessionMessages,
   listAppointments,
+  listCustomerFeedbacks,
+  listDoctors,
   listTickets,
+  listVisits,
+  recordVisit,
   setMessageFeedback,
   updateAppointmentDecision,
+  updateDoctor,
   updateTicketStatus,
 } from './src/server/store.ts';
 import type {
@@ -34,6 +43,7 @@ const VALID_APPT_STATUSES: AppointmentStatus[] = [
   'Confirmed',
   'Rescheduled',
   'Rejected',
+  'Visited',
 ];
 
 async function startServer(): Promise<void> {
@@ -45,9 +55,71 @@ async function startServer(): Promise<void> {
   });
 
   app.get('/api/clinic', (_req: Request, res: Response) => {
-    res.json(CLINIC_DATA);
+    res.json({
+      ...CLINIC_DATA,
+      doctors: listDoctors(),
+    });
   });
 
+  // --- Doctors Directory CRUD ---
+  app.get('/api/doctors', (_req: Request, res: Response) => {
+    res.json({ doctors: listDoctors() });
+  });
+
+  app.post('/api/doctors', (req: Request, res: Response) => {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const role = typeof req.body?.role === 'string' ? req.body.role.trim() : '';
+    const days = typeof req.body?.days === 'string' ? req.body.days.trim() : '';
+    const activeDays = Array.isArray(req.body?.activeDays)
+      ? req.body.activeDays.filter((d: unknown) => typeof d === 'string')
+      : undefined;
+
+    if (!name || !role || (!days && (!activeDays || activeDays.length === 0))) {
+      res.status(400).json({ error: 'Doctor name, speciality/role, and working days are required.' });
+      return;
+    }
+
+    const doctor = addDoctor({ name, role, days, activeDays });
+    res.status(201).json({ doctor });
+  });
+
+  app.put('/api/doctors/:id', (req: Request, res: Response) => {
+    const id = String(req.params.id || '').trim();
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const role = typeof req.body?.role === 'string' ? req.body.role.trim() : '';
+    const days = typeof req.body?.days === 'string' ? req.body.days.trim() : '';
+    const activeDays = Array.isArray(req.body?.activeDays)
+      ? req.body.activeDays.filter((d: unknown) => typeof d === 'string')
+      : undefined;
+
+    if (!id || !name || !role || (!days && (!activeDays || activeDays.length === 0))) {
+      res.status(400).json({ error: 'Doctor id, name, role, and working days are required.' });
+      return;
+    }
+
+    const updated = updateDoctor(id, { name, role, days, activeDays });
+    if (!updated) {
+      res.status(404).json({ error: 'Doctor not found.' });
+      return;
+    }
+    res.json({ doctor: updated });
+  });
+
+  app.delete('/api/doctors/:id', (req: Request, res: Response) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      res.status(400).json({ error: 'Doctor id is required.' });
+      return;
+    }
+    const ok = deleteDoctor(id);
+    if (!ok) {
+      res.status(404).json({ error: 'Doctor not found.' });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
+  // --- Chat ---
   app.get('/api/chat/:sessionId', (req: Request, res: Response) => {
     const sessionId = String(req.params.sessionId || '').trim();
     if (!sessionId) {
@@ -122,6 +194,7 @@ async function startServer(): Promise<void> {
     res.json({ message: updated });
   });
 
+  // --- Tickets ---
   app.get('/api/tickets', (_req: Request, res: Response) => {
     res.json({ tickets: listTickets() });
   });
@@ -162,6 +235,7 @@ async function startServer(): Promise<void> {
     res.json({ ticket: updated });
   });
 
+  // --- Appointments ---
   app.get('/api/appointments', (_req: Request, res: Response) => {
     res.json({ appointments: listAppointments() });
   });
@@ -221,6 +295,62 @@ async function startServer(): Promise<void> {
     }
 
     res.json({ appointment: updated });
+  });
+
+  // --- Daily Patient Visits & Admin Analytics ---
+  app.get('/api/visits', (_req: Request, res: Response) => {
+    res.json({ visits: listVisits() });
+  });
+
+  app.post('/api/visits', (req: Request, res: Response) => {
+    const doctorId = typeof req.body?.doctorId === 'string' ? req.body.doctorId.trim() : undefined;
+    const doctorName = typeof req.body?.doctorName === 'string' ? req.body.doctorName.trim() : '';
+    const patientName = typeof req.body?.patientName === 'string' ? req.body.patientName.trim() : '';
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : undefined;
+    const dateISO = typeof req.body?.dateISO === 'string' ? req.body.dateISO.trim() : undefined;
+
+    if (!doctorName || !patientName) {
+      res.status(400).json({ error: 'Doctor name and patient name are required.' });
+      return;
+    }
+
+    const visit = recordVisit({
+      doctorId,
+      doctorName,
+      patientName,
+      reason,
+      dateISO,
+      source: 'walk_in',
+    });
+    res.status(201).json({ visit });
+  });
+
+  // --- Customer Feedback Showcase ---
+  app.get('/api/feedback', (_req: Request, res: Response) => {
+    const analytics = getAdminAnalytics();
+    res.json({
+      feedbacks: listCustomerFeedbacks(),
+      feedbackStats: analytics.feedbackStats,
+    });
+  });
+
+  app.post('/api/feedback', (req: Request, res: Response) => {
+    const patientName = typeof req.body?.patientName === 'string' ? req.body.patientName.trim() : '';
+    const doctorName = typeof req.body?.doctorName === 'string' ? req.body.doctorName.trim() : undefined;
+    const rating = Number(req.body?.rating);
+    const comment = typeof req.body?.comment === 'string' ? req.body.comment.trim() : '';
+
+    if (!patientName || !comment || Number.isNaN(rating) || rating < 1 || rating > 5) {
+      res.status(400).json({ error: 'Name, rating (1-5), and feedback comment are required.' });
+      return;
+    }
+
+    const feedback = addCustomerFeedback({ patientName, doctorName, rating, comment });
+    res.status(201).json({ feedback });
+  });
+
+  app.get('/api/analytics', (_req: Request, res: Response) => {
+    res.json(getAdminAnalytics());
   });
 
   const isProd = process.env.NODE_ENV === 'production';

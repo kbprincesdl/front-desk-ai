@@ -1,6 +1,7 @@
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { CLINIC_DATA } from '../data/clinicData.ts';
-import type { LanguageCode, TicketStatus } from '../types/clinic.ts';
+import type { ClinicDoctor, LanguageCode, TicketStatus } from '../types/clinic.ts';
+import { listDoctors } from './store.ts';
 
 export type AssistantCategory = 'answered' | 'needs_human' | 'urgent' | 'no_advice' | 'refuse';
 
@@ -336,7 +337,8 @@ function matchClinicFileDeterministic(
     );
   }
 
-  // 2. Doctors
+  // 2. Doctors (from live clinic directory)
+  const liveDoctors: ClinicDoctor[] = listDoctors();
   const asksWho =
     /\b(who|which doctor|which dentist|doctor|doctors|dentist|dentists|specialist)\b/i.test(q) ||
     /(कौन|डॉक्टर|డాక్టర్|ఎవరు)/i.test(q);
@@ -357,42 +359,65 @@ function matchClinicFileDeterministic(
 
   if (asksChildren) {
     topic = 'doctors';
+    const doc =
+      liveDoctors.find((d) => /sneha|paediatric|pediatric|child/i.test(`${d.name} ${d.role}`)) ??
+      CLINIC_DATA.doctors[2];
     parts.push(
       localizeStatic(lang, {
-        en: `Dr. Sneha Rao (${CLINIC_DATA.doctors[2].role}) sees children on ${CLINIC_DATA.doctors[2].days}. ${CLINIC_DATA.policies.children}`,
-        hi: `डॉ. स्नेहा राव (Dr. Sneha Rao, बच्चों की दंत चिकित्सक, 14 वर्ष से कम उम्र) केवल शनिवार (Saturday) को देखती हैं। माता-पिता का साथ होना आवश्यक है।`,
-        te: `డా. స్నేహా రావు (Dr. Sneha Rao, 14 ఏళ్ల లోపు పిల్లల దంత వైద్యురాలు) శనివారం (Saturday) మాత్రమే చూస్తారు. తల్లిదండ్రులు తప్పనిసరిగా ఉండాలి.`,
+        en: `${doc.name} (${doc.role}) sees children on ${doc.days}. ${CLINIC_DATA.policies.children}`,
+        hi: `${doc.name} (बच्चों की दंत चिकित्सक, 14 वर्ष से कम उम्र) ${doc.days} को देखती हैं। माता-पिता का साथ होना आवश्यक है।`,
+        te: `${doc.name} (14 ఏళ్ల లోపు పిల్లల దంత వైద్యురాలు) ${doc.days} చూస్తారు. తల్లిదండ్రులు తప్పనిసరిగా ఉండాలి.`,
       }),
     );
   }
   if (asksOrtho) {
     topic = 'doctors';
+    const doc =
+      liveDoctors.find((d) => /imran|ortho|braces|aligner/i.test(`${d.name} ${d.role}`)) ??
+      CLINIC_DATA.doctors[1];
     parts.push(
       localizeStatic(lang, {
-        en: `Dr. Imran Qureshi (${CLINIC_DATA.doctors[1].role}) is available on ${CLINIC_DATA.doctors[1].days}.`,
-        hi: `डॉ. इमरान कुरैशी (Dr. Imran Qureshi, ऑर्थोडॉन्टिस्ट - ब्रेसेस और अलाइनर्स) मंगलवार, गुरुवार और शनिवार को उपलब्ध हैं।`,
-        te: `డా. ఇమ్రాన్ ఖురేషి (Dr. Imran Qureshi, ఆర్థోడాంటిస్ట్ - బ్రేసెస్ మరియు అలైన్లర్స్) మంగళవారం, గురువారం మరియు శనివారం అందుబాటులో ఉంటారు.`,
+        en: `${doc.name} (${doc.role}) is available on ${doc.days}.`,
+        hi: `${doc.name} (${doc.role}) ${doc.days} को उपलब्ध हैं।`,
+        te: `${doc.name} (${doc.role}) ${doc.days} అందుబాటులో ఉంటారు.`,
       }),
     );
   }
   if (asksMeera) {
     topic = 'doctors';
+    const doc =
+      liveDoctors.find((d) => /meera|lead|root canal/i.test(`${d.name} ${d.role}`)) ??
+      CLINIC_DATA.doctors[0];
     parts.push(
       localizeStatic(lang, {
-        en: `Dr. Meera Nair (${CLINIC_DATA.doctors[0].role}) is available ${CLINIC_DATA.doctors[0].days}.`,
-        hi: `डॉ. मीरा नायर (Dr. Meera Nair, लीड डेंटिस्ट - रूट कैनाल और फिलिंग) सोमवार से शनिवार तक उपलब्ध हैं।`,
-        te: `డా. మీరా నాయర్ (Dr. Meera Nair, లీడ్ డెంటిస్ట్ - రూట్ కెనాల్ మరియు ఫిల్లింగ్స్) సోమవారం నుండి శనివారం వరకు అందుబాటులో ఉంటారు.`,
+        en: `${doc.name} (${doc.role}) is available ${doc.days}.`,
+        hi: `${doc.name} (${doc.role}) ${doc.days} उपलब्ध हैं।`,
+        te: `${doc.name} (${doc.role}) ${doc.days} అందుబాటులో ఉంటారు.`,
       }),
     );
   }
-  if (asksDoctorsGeneral && !asksChildren && !asksOrtho && !asksMeera) {
+
+  // Match any newly added/custom doctor by name if not already matched
+  const matchedCustom = liveDoctors.filter(
+    (d) =>
+      !/meera|imran|sneha/i.test(d.name) &&
+      q.includes(d.name.replace(/^dr\.?\s*/i, '').toLowerCase()),
+  );
+  if (matchedCustom.length > 0) {
     topic = 'doctors';
-    const docList = CLINIC_DATA.doctors.map((d) => `${d.name} (${d.role}, ${d.days})`).join('; ');
+    for (const d of matchedCustom) {
+      parts.push(`${d.name} (${d.role}) is available ${d.days}.`);
+    }
+  }
+
+  if (asksDoctorsGeneral && !asksChildren && !asksOrtho && !asksMeera && matchedCustom.length === 0) {
+    topic = 'doctors';
+    const docList = liveDoctors.map((d) => `${d.name} (${d.role}, ${d.days})`).join('; ');
     parts.push(
       localizeStatic(lang, {
         en: `Our doctors are: ${docList}.`,
-        hi: `हमारे डॉक्टर: डॉ. मीरा नायर (सोमवार से शनिवार - रूट कैनाल और फिलिंग), डॉ. इमरान कुरैशी (मंगल, गुरु, शनि - ब्रेसेस और अलाइनर्स), डॉ. स्नेहा राव (केवल शनिवार - 14 वर्ष से कम बच्चे)।`,
-        te: `మా డాక్టర్లు: డా. మీరా నాయర్ (సోమ–శని - రూట్ కెనాల్ & ఫిల్లింగ్స్), డా. ఇమ్రాన్ ఖురేషి (మంగళ, గురు, శని - బ్రేసెస్ & అలైన్లర్స్), డా. స్నేహా రావు (శనివారం మాత్రమే - 14 ఏళ్ల లోపు పిల్లలు).`,
+        hi: `हमारे डॉक्टर: ${docList}।`,
+        te: `మా డాక్టర్లు: ${docList}.`,
       }),
     );
   }
@@ -627,11 +652,15 @@ function matchClinicFileDeterministic(
 
 function buildSystemInstruction(lang: LanguageCode): string {
   const langName = lang === 'hi' ? 'Hindi (हिंदी)' : lang === 'te' ? 'Telugu (తెలుగు)' : 'English';
+  const liveClinicData = {
+    ...CLINIC_DATA,
+    doctors: listDoctors().map((d) => ({ name: d.name, role: d.role, days: d.days })),
+  };
 
   return `You are FrontDesk AI, the warm and helpful front desk assistant for ${CLINIC_DATA.clinic.name} in Banjara Hills, Hyderabad.
 
 CLINIC FILE (THE ONLY SOURCE OF TRUTH):
-${JSON.stringify(CLINIC_DATA, null, 2)}
+${JSON.stringify(liveClinicData, null, 2)}
 
 LANGUAGE RULE:
 - Reply in ${langName} (matching the patient's language).

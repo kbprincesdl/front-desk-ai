@@ -1,26 +1,24 @@
 import { useEffect, useState } from 'react';
-import { Clock, MapPin, Phone } from 'lucide-react';
+import { Check, Clock, MapPin, Pencil, Phone, Plus, X } from 'lucide-react';
 import { CLINIC_DATA } from '../data/clinicData';
+import type { ClinicDoctor } from '../types/clinic';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 
-const DOCTOR_DAY_MAP: Record<string, { initials: string; tint: string; activeDays: string[] }> = {
-  'Dr. Meera Nair': {
-    initials: 'MN',
-    tint: 'bg-teal-100 text-teal-800 dark:bg-teal-900/60 dark:text-teal-200',
-    activeDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-  },
-  'Dr. Imran Qureshi': {
-    initials: 'IQ',
-    tint: 'bg-orange-100 text-orange-800 dark:bg-orange-950/70 dark:text-orange-200',
-    activeDays: ['Tue', 'Thu', 'Sat'],
-  },
-  'Dr. Sneha Rao': {
-    initials: 'SR',
-    tint: 'bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-200',
-    activeDays: ['Sat'],
-  },
-};
+const AVATAR_TINTS = [
+  'bg-teal-100 text-teal-800 dark:bg-teal-900/60 dark:text-teal-200',
+  'bg-orange-100 text-orange-800 dark:bg-orange-950/70 dark:text-orange-200',
+  'bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-200',
+  'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-200',
+];
+
+function getInitials(name: string): string {
+  const cleaned = name.replace(/^dr\.?\s*/i, '').trim();
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'DR';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
 
 function getHyderabadTimeInfo(): {
   dayShort: string;
@@ -57,7 +55,6 @@ export function getLiveClinicStatus(): {
     return { label: 'Closed · emergency line open', tone: 'closed', dayShort };
   }
 
-  // Mon - Sat
   if (minutesSinceMidnight >= 13 * 60 + 30 && minutesSinceMidnight < 14 * 60 + 30) {
     return { label: 'Lunch break · front desk reopens 2:30 pm', tone: 'lunch', dayShort };
   }
@@ -67,8 +64,22 @@ export function getLiveClinicStatus(): {
   return { label: 'Closed · opens 9 am', tone: 'closed', dayShort };
 }
 
-export function ClinicDirectory() {
+interface ClinicDirectoryProps {
+  doctors: ClinicDoctor[];
+  onDoctorsChange: (nextDoctors: ClinicDoctor[]) => void;
+}
+
+export function ClinicDirectory({ doctors, onDoctorsChange }: ClinicDirectoryProps) {
   const [liveStatus, setLiveStatus] = useState(getLiveClinicStatus);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
+
+  const [formName, setFormName] = useState('');
+  const [formRole, setFormRole] = useState('');
+  const [formDays, setFormDays] = useState('');
+  const [formActiveDays, setFormActiveDays] = useState<string[]>([...WEEKDAYS]);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -76,6 +87,95 @@ export function ClinicDirectory() {
     }, 60000);
     return () => window.clearInterval(timer);
   }, []);
+
+  const startAdd = () => {
+    setEditingId(null);
+    setIsAdding(true);
+    setFormName('');
+    setFormRole('');
+    setFormDays('Monday to Saturday');
+    setFormActiveDays([...WEEKDAYS]);
+    setFormError(null);
+  };
+
+  const startEdit = (doc: ClinicDoctor) => {
+    setIsAdding(false);
+    setEditingId(doc.id);
+    setFormName(doc.name);
+    setFormRole(doc.role);
+    setFormDays(doc.days);
+    setFormActiveDays(doc.activeDays.length > 0 ? [...doc.activeDays] : [...WEEKDAYS]);
+    setFormError(null);
+  };
+
+  const cancelEdit = () => {
+    setIsAdding(false);
+    setEditingId(null);
+    setFormError(null);
+  };
+
+  const toggleDay = (day: string) => {
+    setFormActiveDays((prev) => {
+      const next = prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day];
+      const ordered = WEEKDAYS.filter((w) => next.includes(w));
+      setFormDays(
+        ordered.length === 6
+          ? 'Monday to Saturday'
+          : ordered.length === 1
+            ? `${ordered[0]} only`
+            : ordered.join(', '),
+      );
+      return ordered;
+    });
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formName.trim() || !formRole.trim() || formActiveDays.length === 0) {
+      setFormError('Enter name, speciality, and at least one working day.');
+      return;
+    }
+
+    setSaving(true);
+    setFormError(null);
+    try {
+      if (isAdding) {
+        const res = await fetch('/api/doctors', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: formName.trim(),
+            role: formRole.trim(),
+            days: formDays.trim() || formActiveDays.join(', '),
+            activeDays: formActiveDays,
+          }),
+        });
+        if (!res.ok) throw new Error('Could not add doctor.');
+        const data = (await res.json()) as { doctor: ClinicDoctor };
+        onDoctorsChange([...doctors, data.doctor]);
+        setIsAdding(false);
+      } else if (editingId) {
+        const res = await fetch(`/api/doctors/${encodeURIComponent(editingId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: formName.trim(),
+            role: formRole.trim(),
+            days: formDays.trim() || formActiveDays.join(', '),
+            activeDays: formActiveDays,
+          }),
+        });
+        if (!res.ok) throw new Error('Could not save doctor changes.');
+        const data = (await res.json()) as { doctor: ClinicDoctor };
+        onDoctorsChange(doctors.map((d) => (d.id === editingId ? data.doctor : d)));
+        setEditingId(null);
+      }
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Save failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const statusToneClasses: Record<typeof liveStatus.tone, string> = {
     open: 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200',
@@ -110,23 +210,164 @@ export function ClinicDirectory() {
         </div>
       </div>
 
-      {/* Doctor Cards */}
+      {/* Doctors Header with Add Button */}
       <div>
-        <h3 className="text-xs font-semibold text-stone-700 dark:text-slate-300">
-          Our Dentists
-        </h3>
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-xs font-semibold text-stone-700 dark:text-slate-300">
+            Our Dentists ({doctors.length})
+          </h3>
+          <button
+            type="button"
+            onClick={startAdd}
+            className="inline-flex min-h-[30px] items-center gap-1 rounded-lg border border-[#E7D8C5] bg-[#FFF9F2] px-2.5 py-1 text-[11px] font-semibold text-teal-800 transition-colors hover:border-teal-700 hover:bg-teal-50 dark:border-slate-700 dark:bg-slate-800 dark:text-teal-300"
+          >
+            <Plus className="h-3 w-3" aria-hidden="true" />
+            <span>Add Dr</span>
+          </button>
+        </div>
+
+        {/* Add Doctor Form */}
+        {isAdding && (
+          <form
+            onSubmit={handleSave}
+            className="mt-2.5 space-y-2 rounded-xl border border-teal-300 bg-teal-50/40 p-3 dark:border-teal-800 dark:bg-teal-950/30"
+          >
+            <p className="text-xs font-bold text-stone-900 dark:text-slate-100">Add New Doctor</p>
+            <input
+              type="text"
+              required
+              value={formName}
+              onChange={(e) => setFormName(e.target.value)}
+              placeholder="Doctor name (e.g., Dr. Kavita Reddy)"
+              className="min-h-[36px] w-full rounded-lg border border-[#DFCEBA] bg-white px-2.5 text-base text-stone-900 sm:text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+            />
+            <input
+              type="text"
+              required
+              value={formRole}
+              onChange={(e) => setFormRole(e.target.value)}
+              placeholder="Speciality / role"
+              className="min-h-[36px] w-full rounded-lg border border-[#DFCEBA] bg-white px-2.5 text-base text-stone-900 sm:text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+            />
+            <div className="flex flex-wrap gap-1">
+              {WEEKDAYS.map((day) => {
+                const active = formActiveDays.includes(day);
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    onClick={() => toggleDay(day)}
+                    className={`rounded px-2 py-1 text-[11px] font-semibold transition-colors ${
+                      active
+                        ? 'bg-teal-700 text-white dark:bg-teal-500 dark:text-slate-950'
+                        : 'border border-[#E7D8C5] bg-white text-stone-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400'
+                    }`}
+                  >
+                    {day}
+                  </button>
+                );
+              })}
+            </div>
+            {formError && <p className="text-[11px] text-red-600">{formError}</p>}
+            <div className="flex justify-end gap-1.5 pt-1">
+              <button
+                type="button"
+                onClick={cancelEdit}
+                className="inline-flex min-h-[32px] items-center gap-1 rounded-lg border border-[#E7D8C5] bg-white px-2.5 text-xs font-medium text-stone-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+              >
+                <X className="h-3 w-3" />
+                <span>Cancel</span>
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="inline-flex min-h-[32px] items-center gap-1 rounded-lg bg-[#C84635] px-3 text-xs font-semibold text-white hover:bg-[#B23A2A] disabled:opacity-50"
+              >
+                <Check className="h-3 w-3" />
+                <span>{saving ? 'Saving...' : 'Save'}</span>
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Doctor Cards */}
         <div className="mt-2.5 space-y-2.5">
-          {CLINIC_DATA.doctors.map((doc) => {
-            const meta = DOCTOR_DAY_MAP[doc.name] ?? {
-              initials: 'DR',
-              tint: 'bg-teal-100 text-teal-800',
-              activeDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-            };
-            const availableToday = meta.activeDays.includes(liveStatus.dayShort);
+          {doctors.map((doc, idx) => {
+            const availableToday = doc.activeDays.includes(liveStatus.dayShort);
+            const tint = AVATAR_TINTS[idx % AVATAR_TINTS.length];
+            const isEditingThis = editingId === doc.id;
+
+            if (isEditingThis) {
+              return (
+                <form
+                  key={doc.id}
+                  onSubmit={handleSave}
+                  className="space-y-2 rounded-xl border border-teal-400 bg-teal-50/40 p-3 dark:border-teal-700 dark:bg-teal-950/30"
+                >
+                  <p className="text-xs font-bold text-stone-900 dark:text-slate-100">
+                    Edit Doctor
+                  </p>
+                  <input
+                    type="text"
+                    required
+                    value={formName}
+                    onChange={(e) => setFormName(e.target.value)}
+                    placeholder="Doctor name"
+                    className="min-h-[36px] w-full rounded-lg border border-[#DFCEBA] bg-white px-2.5 text-base text-stone-900 sm:text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                  <input
+                    type="text"
+                    required
+                    value={formRole}
+                    onChange={(e) => setFormRole(e.target.value)}
+                    placeholder="Speciality / role"
+                    className="min-h-[36px] w-full rounded-lg border border-[#DFCEBA] bg-white px-2.5 text-base text-stone-900 sm:text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                  <div className="flex flex-wrap gap-1">
+                    {WEEKDAYS.map((day) => {
+                      const active = formActiveDays.includes(day);
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          onClick={() => toggleDay(day)}
+                          className={`rounded px-2 py-1 text-[11px] font-semibold transition-colors ${
+                            active
+                              ? 'bg-teal-700 text-white dark:bg-teal-500 dark:text-slate-950'
+                              : 'border border-[#E7D8C5] bg-white text-stone-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400'
+                          }`}
+                        >
+                          {day}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {formError && <p className="text-[11px] text-red-600">{formError}</p>}
+                  <div className="flex justify-end gap-1.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={cancelEdit}
+                      className="inline-flex min-h-[32px] items-center gap-1 rounded-lg border border-[#E7D8C5] bg-white px-2.5 text-xs font-medium text-stone-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    >
+                      <X className="h-3 w-3" />
+                      <span>Cancel</span>
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="inline-flex min-h-[32px] items-center gap-1 rounded-lg bg-[#C84635] px-3 text-xs font-semibold text-white hover:bg-[#B23A2A] disabled:opacity-50"
+                    >
+                      <Check className="h-3 w-3" />
+                      <span>{saving ? 'Saving...' : 'Save'}</span>
+                    </button>
+                  </div>
+                </form>
+              );
+            }
 
             return (
               <div
-                key={doc.name}
+                key={doc.id}
                 className={`rounded-xl border p-3 transition-colors ${
                   availableToday
                     ? 'border-teal-300 bg-teal-50/50 dark:border-teal-800 dark:bg-teal-950/30'
@@ -135,28 +376,39 @@ export function ClinicDirectory() {
               >
                 <div className="flex items-start gap-3">
                   <div
-                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${meta.tint}`}
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${tint}`}
                     aria-hidden="true"
                   >
-                    {meta.initials}
+                    {getInitials(doc.name)}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center justify-between gap-1">
-                      <p className="text-xs font-bold text-stone-900 dark:text-slate-100">
+                    <div className="flex items-center justify-between gap-1">
+                      <p className="text-xs font-bold text-stone-900 truncate dark:text-slate-100">
                         {doc.name}
                       </p>
-                      {availableToday && (
-                        <span className="text-[11px] font-semibold text-teal-700 dark:text-teal-300">
-                          Today
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {availableToday && (
+                          <span className="text-[11px] font-semibold text-teal-700 dark:text-teal-300">
+                            Today
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => startEdit(doc)}
+                          aria-label={`Edit ${doc.name}`}
+                          title={`Edit ${doc.name}`}
+                          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-stone-500 hover:bg-[#EFE2D3] hover:text-stone-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                      </div>
                     </div>
                     <p className="mt-0.5 text-[11px] leading-snug text-stone-600 dark:text-slate-400">
                       {doc.role}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-1">
                       {WEEKDAYS.map((day) => {
-                        const worksDay = meta.activeDays.includes(day);
+                        const worksDay = doc.activeDays.includes(day);
                         const isToday = day === liveStatus.dayShort;
                         return (
                           <span

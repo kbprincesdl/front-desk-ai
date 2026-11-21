@@ -1,11 +1,16 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { CLINIC_DATA } from '../data/clinicData.ts';
 import type {
+  AdminAnalytics,
   AppointmentRequest,
   AppointmentStatus,
   ChatMessage,
+  ClinicDoctor,
+  CustomerFeedback,
   FeedbackValue,
+  PatientVisit,
   Ticket,
   TicketStatus,
 } from '../types/clinic.ts';
@@ -14,10 +19,64 @@ interface StoreState {
   sessions: Record<string, ChatMessage[]>;
   tickets: Ticket[];
   appointments: AppointmentRequest[];
+  doctors: ClinicDoctor[];
+  visits: PatientVisit[];
+  feedbacks: CustomerFeedback[];
 }
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const STORE_FILE = path.join(DATA_DIR, 'clinic-store.json');
+
+const ALL_WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function inferActiveDaysFromText(daysText: string): string[] {
+  const lower = daysText.toLowerCase();
+  if (lower.includes('monday to saturday') || lower.includes('mon to sat')) {
+    return [...ALL_WEEKDAYS];
+  }
+  const matched = ALL_WEEKDAYS.filter((d) => {
+    const fullMap: Record<string, string> = {
+      Mon: 'monday',
+      Tue: 'tuesday',
+      Wed: 'wednesday',
+      Thu: 'thursday',
+      Fri: 'friday',
+      Sat: 'saturday',
+    };
+    return lower.includes(d.toLowerCase()) || lower.includes(fullMap[d]);
+  });
+  return matched.length > 0 ? matched : [...ALL_WEEKDAYS];
+}
+
+function defaultDoctors(): ClinicDoctor[] {
+  return CLINIC_DATA.doctors.map((d, idx) => ({
+    id: `DR-${101 + idx}`,
+    name: d.name,
+    role: d.role,
+    days: d.days,
+    activeDays: inferActiveDaysFromText(d.days),
+  }));
+}
+
+export function getTodayIST(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+
+function getLastNDaysIST(n: number): { dateISO: string; label: string }[] {
+  const now = new Date();
+  const days: { dateISO: string; label: string }[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const dt = new Date(now.getTime() - i * 86400000);
+    const dateISO = dt.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const label = dt.toLocaleDateString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      weekday: 'short',
+      day: 'numeric',
+    });
+    days.push({ dateISO, label });
+  }
+  return days;
+}
 
 let state: StoreState = loadInitialState();
 
@@ -30,12 +89,25 @@ function loadInitialState(): StoreState {
         sessions: parsed.sessions && typeof parsed.sessions === 'object' ? parsed.sessions : {},
         tickets: Array.isArray(parsed.tickets) ? parsed.tickets : [],
         appointments: Array.isArray(parsed.appointments) ? parsed.appointments : [],
+        doctors:
+          Array.isArray(parsed.doctors) && parsed.doctors.length > 0
+            ? parsed.doctors
+            : defaultDoctors(),
+        visits: Array.isArray(parsed.visits) ? parsed.visits : [],
+        feedbacks: Array.isArray(parsed.feedbacks) ? parsed.feedbacks : [],
       };
     }
   } catch (err) {
     console.error('Failed to read store file, starting fresh:', err);
   }
-  return { sessions: {}, tickets: [], appointments: [] };
+  return {
+    sessions: {},
+    tickets: [],
+    appointments: [],
+    doctors: defaultDoctors(),
+    visits: [],
+    feedbacks: [],
+  };
 }
 
 function persistState(): void {
@@ -202,11 +274,27 @@ export function updateAppointmentDecision(
   const appt = state.appointments.find((a) => a.id === appointmentId);
   if (!appt) return null;
 
+  const previousStatus = appt.status;
   appt.status = status;
   if (staffNote?.trim()) {
     appt.staffNote = staffNote.trim();
   }
   appt.updatedAt = new Date().toISOString();
+
+  // If marked Visited (and wasn't already Visited), record a real patient visit entry
+  if (status === 'Visited' && previousStatus !== 'Visited') {
+    const matchedDoc = state.doctors.find(
+      (d) => d.name.toLowerCase() === appt.doctorName.toLowerCase(),
+    );
+    recordVisit({
+      doctorId: matchedDoc?.id ?? appt.doctorName,
+      doctorName: appt.doctorName,
+      patientName: appt.patientName,
+      reason: appt.reason,
+      dateISO: appt.dateISO || getTodayIST(),
+      source: 'appointment',
+    });
+  }
 
   let messageText = '';
   if (status === 'Confirmed') {
@@ -227,4 +315,229 @@ export function updateAppointmentDecision(
 
   persistState();
   return appt;
+}
+
+// --- Admin Clinic Directory (Doctors) ---
+export function listDoctors(): ClinicDoctor[] {
+  return [...state.doctors];
+}
+
+export function addDoctor(input: {
+  name: string;
+  role: string;
+  days: string;
+  activeDays?: string[];
+}): ClinicDoctor {
+  const num = state.doctors.length + 101;
+  const activeDays =
+    Array.isArray(input.activeDays) && input.activeDays.length > 0
+      ? input.activeDays
+      : inferActiveDaysFromText(input.days);
+  const doctor: ClinicDoctor = {
+    id: `DR-${num}-${Date.now().toString(36).slice(-4)}`,
+    name: input.name.trim(),
+    role: input.role.trim(),
+    days: input.days.trim() || activeDays.join(', '),
+    activeDays,
+  };
+  state.doctors.push(doctor);
+  persistState();
+  return doctor;
+}
+
+export function updateDoctor(
+  doctorId: string,
+  input: {
+    name: string;
+    role: string;
+    days: string;
+    activeDays?: string[];
+  },
+): ClinicDoctor | null {
+  const doc = state.doctors.find((d) => d.id === doctorId);
+  if (!doc) return null;
+
+  const oldName = doc.name;
+  doc.name = input.name.trim();
+  doc.role = input.role.trim();
+  doc.days = input.days.trim() || (input.activeDays?.join(', ') ?? doc.days);
+  doc.activeDays =
+    Array.isArray(input.activeDays) && input.activeDays.length > 0
+      ? input.activeDays
+      : inferActiveDaysFromText(doc.days);
+
+  // Keep existing visit logs linked cleanly if doctor name was edited
+  if (oldName !== doc.name) {
+    for (const v of state.visits) {
+      if (v.doctorId === doc.id) {
+        v.doctorName = doc.name;
+      }
+    }
+  }
+
+  persistState();
+  return doc;
+}
+
+export function deleteDoctor(doctorId: string): boolean {
+  const before = state.doctors.length;
+  state.doctors = state.doctors.filter((d) => d.id !== doctorId);
+  if (state.doctors.length === before) return false;
+  persistState();
+  return true;
+}
+
+// --- Patient Visits & Daily Doctor Analytics ---
+export function recordVisit(input: {
+  doctorId?: string;
+  doctorName: string;
+  patientName: string;
+  reason?: string;
+  dateISO?: string;
+  source?: 'appointment' | 'walk_in';
+}): PatientVisit {
+  const matchedDoc = state.doctors.find(
+    (d) =>
+      (input.doctorId && d.id === input.doctorId) ||
+      d.name.toLowerCase() === input.doctorName.toLowerCase(),
+  );
+  const visit: PatientVisit = {
+    id: `VST-${state.visits.length + 301}`,
+    doctorId: matchedDoc?.id ?? input.doctorId ?? input.doctorName,
+    doctorName: matchedDoc?.name ?? input.doctorName.trim(),
+    patientName: input.patientName.trim(),
+    reason: input.reason?.trim() || 'Clinic visit',
+    dateISO: input.dateISO?.trim() || getTodayIST(),
+    source: input.source ?? 'walk_in',
+    createdAt: new Date().toISOString(),
+  };
+  state.visits.unshift(visit);
+  persistState();
+  return visit;
+}
+
+export function listVisits(): PatientVisit[] {
+  return [...state.visits].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+}
+
+// --- Customer Feedbacks ---
+export function addCustomerFeedback(input: {
+  patientName: string;
+  doctorName?: string;
+  rating: number;
+  comment: string;
+}): CustomerFeedback {
+  const fb: CustomerFeedback = {
+    id: `FB-${state.feedbacks.length + 101}`,
+    patientName: input.patientName.trim(),
+    doctorName: input.doctorName?.trim() || undefined,
+    rating: Math.max(1, Math.min(5, Math.round(input.rating))),
+    comment: input.comment.trim(),
+    createdAt: new Date().toISOString(),
+  };
+  state.feedbacks.unshift(fb);
+  persistState();
+  return fb;
+}
+
+export function listCustomerFeedbacks(): CustomerFeedback[] {
+  return [...state.feedbacks].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+}
+
+export function getAdminAnalytics(): AdminAnalytics {
+  const todayISO = getTodayIST();
+  const days = getLastNDaysIST(7);
+  const daySet = new Set(days.map((d) => d.dateISO));
+
+  const dailyMap: Record<string, number> = {};
+  for (const d of days) dailyMap[d.dateISO] = 0;
+
+  let todayVisits = 0;
+  for (const v of state.visits) {
+    if (v.dateISO === todayISO) todayVisits++;
+    if (daySet.has(v.dateISO)) {
+      dailyMap[v.dateISO] = (dailyMap[v.dateISO] || 0) + 1;
+    }
+  }
+
+  const dailyTotals = days.map((d) => ({
+    dateISO: d.dateISO,
+    label: d.dateISO === todayISO ? 'Today' : d.label,
+    count: dailyMap[d.dateISO] || 0,
+  }));
+
+  const doctorStats = state.doctors.map((doc) => {
+    const dailyCounts: Record<string, number> = {};
+    for (const d of days) dailyCounts[d.dateISO] = 0;
+
+    let totalCount = 0;
+    let todayCount = 0;
+
+    for (const v of state.visits) {
+      const matches =
+        v.doctorId === doc.id || v.doctorName.toLowerCase() === doc.name.toLowerCase();
+      if (!matches) continue;
+      totalCount++;
+      if (v.dateISO === todayISO) todayCount++;
+      if (daySet.has(v.dateISO)) {
+        dailyCounts[v.dateISO] = (dailyCounts[v.dateISO] || 0) + 1;
+      }
+    }
+
+    return {
+      doctorId: doc.id,
+      doctorName: doc.name,
+      role: doc.role,
+      todayCount,
+      totalCount,
+      dailyCounts,
+    };
+  });
+
+  const topDoctors = [...doctorStats]
+    .sort((a, b) => b.totalCount - a.totalCount || b.todayCount - a.todayCount)
+    .map((d) => ({
+      doctorId: d.doctorId,
+      doctorName: d.doctorName,
+      role: d.role,
+      totalCount: d.totalCount,
+      todayCount: d.todayCount,
+    }));
+
+  let helpfulCount = 0;
+  let notHelpfulCount = 0;
+  for (const msgs of Object.values(state.sessions)) {
+    for (const m of msgs) {
+      if (m.feedback === 'up') helpfulCount++;
+      if (m.feedback === 'down') notHelpfulCount++;
+    }
+  }
+
+  const reviewCount = state.feedbacks.length;
+  const averageRating =
+    reviewCount > 0
+      ? Number(
+          (state.feedbacks.reduce((sum, f) => sum + f.rating, 0) / reviewCount).toFixed(1),
+        )
+      : 0;
+
+  return {
+    todayISO,
+    todayVisits,
+    totalVisits: state.visits.length,
+    dailyTotals,
+    doctorStats,
+    topDoctors,
+    feedbackStats: {
+      helpfulCount,
+      notHelpfulCount,
+      totalBotRatings: helpfulCount + notHelpfulCount,
+      reviewCount,
+      averageRating,
+    },
+  };
 }

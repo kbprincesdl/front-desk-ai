@@ -20,10 +20,31 @@ import {
   VolumeX,
 } from 'lucide-react';
 import { CLINIC_DATA } from '../data/clinicData';
-import type { AppointmentRequest, ChatMessage, FeedbackValue, LanguageCode } from '../types/clinic';
+import type {
+  AppointmentRequest,
+  ChatMessage,
+  ClinicDoctor,
+  CustomerFeedback,
+  FeedbackValue,
+  LanguageCode,
+} from '../types/clinic';
 import { BookingFlowCard } from './BookingFlowCard';
 import { ClinicDirectory } from './ClinicDirectory';
+import { CustomerFeedbackBanner } from './CustomerFeedbackBanner';
 import { ToothMascot } from './ToothMascot';
+
+const INITIAL_DOCTORS: ClinicDoctor[] = CLINIC_DATA.doctors.map((d, idx) => ({
+  id: `DR-${101 + idx}`,
+  name: d.name,
+  role: d.role,
+  days: d.days,
+  activeDays:
+    d.days === 'Monday to Saturday'
+      ? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+      : d.days === 'Saturday only'
+        ? ['Sat']
+        : ['Tue', 'Thu', 'Sat'],
+}));
 
 const SESSION_STORAGE_KEY = 'bright_roots_session_id';
 const LANG_STORAGE_KEY = 'bright_roots_lang';
@@ -209,6 +230,13 @@ export function PatientChat() {
   const [isListening, setIsListening] = useState(false);
   const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [doctors, setDoctors] = useState<ClinicDoctor[]>(INITIAL_DOCTORS);
+  const [feedbacks, setFeedbacks] = useState<CustomerFeedback[]>([]);
+  const [feedbackStats, setFeedbackStats] = useState({
+    helpfulCount: 0,
+    totalBotRatings: 0,
+    averageRating: 0,
+  });
 
   const threadEndRef = useRef<HTMLDivElement | null>(null);
   const askedOnLoadRef = useRef<string | null>(null);
@@ -242,6 +270,32 @@ export function PatientChat() {
       }
     } catch {
       // Ignore transient background poll failures
+    }
+  }, []);
+
+  const fetchShowcaseData = useCallback(async () => {
+    try {
+      const [docRes, fbRes] = await Promise.all([fetch('/api/doctors'), fetch('/api/feedback')]);
+      if (docRes.ok) {
+        const docData = (await docRes.json()) as { doctors?: ClinicDoctor[] };
+        if (Array.isArray(docData.doctors) && docData.doctors.length > 0) {
+          setDoctors(docData.doctors);
+        }
+      }
+      if (fbRes.ok) {
+        const fbData = (await fbRes.json()) as {
+          feedbacks?: CustomerFeedback[];
+          feedbackStats?: {
+            helpfulCount: number;
+            totalBotRatings: number;
+            averageRating: number;
+          };
+        };
+        if (Array.isArray(fbData.feedbacks)) setFeedbacks(fbData.feedbacks);
+        if (fbData.feedbackStats) setFeedbackStats(fbData.feedbackStats);
+      }
+    } catch {
+      // Non-blocking
     }
   }, []);
 
@@ -310,7 +364,7 @@ export function PatientChat() {
     let active = true;
 
     const init = async () => {
-      await fetchMessages(sessionId);
+      await Promise.all([fetchMessages(sessionId), fetchShowcaseData()]);
       if (!active) return;
 
       const params = new URLSearchParams(window.location.search);
@@ -441,6 +495,7 @@ export function PatientChat() {
           body: JSON.stringify({ feedback: finalValue }),
         },
       );
+      fetchShowcaseData();
     } catch {
       // Non-blocking feedback update
     }
@@ -504,6 +559,17 @@ export function PatientChat() {
 
   return (
     <main className="animate-page-in mx-auto w-full max-w-6xl px-3 py-4 sm:px-6 sm:py-6">
+      <CustomerFeedbackBanner
+        feedbacks={feedbacks}
+        helpfulCount={feedbackStats.helpfulCount}
+        totalBotRatings={feedbackStats.totalBotRatings}
+        averageRating={feedbackStats.averageRating}
+        doctors={doctors}
+        onFeedbackAdded={(fb) => {
+          setFeedbacks((prev) => [fb, ...prev]);
+          fetchShowcaseData();
+        }}
+      />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_350px] lg:items-start">
         {/* Primary Chat Workspace */}
         <section
@@ -758,6 +824,7 @@ export function PatientChat() {
               <BookingFlowCard
                 sessionId={sessionId}
                 language={language}
+                doctors={doctors}
                 onClose={() => setIsBookingOpen(false)}
                 onSubmitted={handleBookingSubmitted}
               />
@@ -864,8 +931,8 @@ export function PatientChat() {
           </form>
         </section>
 
-        {/* Clinic Directory with Live Status & Highlighted Doctor Cards */}
-        <ClinicDirectory />
+        {/* Clinic Directory with Live Status & Editable Doctor Cards */}
+        <ClinicDirectory doctors={doctors} onDoctorsChange={setDoctors} />
       </div>
     </main>
   );

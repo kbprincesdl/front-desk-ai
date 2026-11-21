@@ -38,7 +38,7 @@ export interface Ticket {
   staffReplies: StaffReply[];
 }
 
-export type AppointmentStatus = 'Pending' | 'Confirmed' | 'Rescheduled' | 'Rejected';
+export type AppointmentStatus = 'Pending' | 'Confirmed' | 'Rescheduled' | 'Rejected' | 'Visited';
 
 export interface AppointmentRequest {
   id: string;
@@ -57,9 +57,60 @@ export interface AppointmentRequest {
 }
 
 export interface ClinicDoctor {
+  id: string;
   name: string;
   role: string;
   days: string;
+  activeDays: string[]; // e.g. ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+}
+
+export interface PatientVisit {
+  id: string;
+  doctorId: string;
+  doctorName: string;
+  patientName: string;
+  reason: string;
+  dateISO: string; // YYYY-MM-DD in Asia/Kolkata
+  source: 'appointment' | 'walk_in';
+  createdAt: string;
+}
+
+export interface CustomerFeedback {
+  id: string;
+  patientName: string;
+  doctorName?: string;
+  rating: number; // 1 to 5
+  comment: string;
+  createdAt: string;
+}
+
+export interface AdminAnalytics {
+  todayISO: string;
+  todayVisits: number;
+  totalVisits: number;
+  dailyTotals: { dateISO: string; label: string; count: number }[];
+  doctorStats: {
+    doctorId: string;
+    doctorName: string;
+    role: string;
+    todayCount: number;
+    totalCount: number;
+    dailyCounts: Record<string, number>;
+  }[];
+  topDoctors: {
+    doctorId: string;
+    doctorName: string;
+    role: string;
+    totalCount: number;
+    todayCount: number;
+  }[];
+  feedbackStats: {
+    helpfulCount: number;
+    notHelpfulCount: number;
+    totalBotRatings: number;
+    reviewCount: number;
+    averageRating: number;
+  };
 }
 
 export interface ClinicService {
@@ -87,7 +138,7 @@ export interface ClinicData {
     lunch_break: string;
     public_holidays: string;
   };
-  doctors: ClinicDoctor[];
+  doctors: Omit<ClinicDoctor, 'id' | 'activeDays'>[];
   services: ClinicService[];
   policies: {
     appointments: string;

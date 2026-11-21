@@ -1,0 +1,70 @@
+{
+  "sessions": {
+    "dc73fb99-7d41-458c-b8a9-624dd127c40f": [
+      {
+        "id": "713775aa-c707-4b33-85f1-bf913c9ed3c8",
+        "sessionId": "dc73fb99-7d41-458c-b8a9-624dd127c40f",
+        "createdAt": "2026-11-21T06:23:07.849Z",
+        "feedback": null,
+        "role": "staff",
+        "text": "Appointment Confirmed (APT-201): ABC, your Child Visit (under 14) with Dr. Sneha Rao on Sat, 28 Nov at 10:30 am is confirmed by our front desk.",
+        "fromFallback": false
+      },
+      {
+        "id": "299de49c-d068-4c7b-820b-5b77cbf10eec",
+        "sessionId": "dc73fb99-7d41-458c-b8a9-624dd127c40f",
+        "createdAt": "2026-11-21T06:23:58.313Z",
+        "feedback": null,
+        "role": "patient",
+        "text": "How much is a root canal?",
+        "language": "en"
+      },
+      {
+        "id": "4085b8dd-e8e6-4dcf-a971-260d472605c5",
+        "sessionId": "dc73fb99-7d41-458c-b8a9-624dd127c40f",
+        "createdAt": "2026-11-21T06:24:10.522Z",
+        "feedback": null,
+        "role": "bot",
+        "text": "Root canal treatment is Rs 6,500 to Rs 9,000 (Usually two visits).",
+        "fromFallback": true,
+        "language": "en",
+        "suggestedFollowups": [
+          "Book appointment",
+          "EMI & payment options",
+          "Insurance coverage"
+        ],
+        "ticketId": "TKT-101",
+        "ticketStatus": "answered"
+      }
+    ]
+  },
+  "tickets": [
+    {
+      "id": "TKT-101",
+      "sessionId": "dc73fb99-7d41-458c-b8a9-624dd127c40f",
+      "question": "How much is a root canal?",
+      "botReply": "Root canal treatment is Rs 6,500 to Rs 9,000 (Usually two visits).",
+      "status": "answered",
+      "fromFallback": true,
+      "createdAt": "2026-11-21T06:24:10.522Z",
+      "updatedAt": "2026-11-21T06:24:10.522Z",
+      "staffReplies": []
+    }
+  ],
+  "appointments": [
+    {
+      "id": "APT-201",
+      "sessionId": "dc73fb99-7d41-458c-b8a9-624dd127c40f",
+      "reason": "Child Visit (under 14)",
+      "doctorName": "Dr. Sneha Rao",
+      "dateISO": "2026-11-28",
+      "dateLabel": "Sat, 28 Nov",
+      "timeSlot": "10:30 am",
+      "patientName": "ABC",
+      "patientPhone": "+911234567890",
+      "status": "Confirmed",
+      "createdAt": "2026-11-21T06:22:34.737Z",
+      "updatedAt": "2026-11-21T06:23:07.849Z"
+    }
+  ]
+}
