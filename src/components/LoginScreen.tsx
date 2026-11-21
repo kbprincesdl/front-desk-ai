@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   Eye,
   EyeOff,
   Lock,
+  RefreshCw,
   ShieldCheck,
   Stethoscope,
   UserCheck,
@@ -53,33 +55,38 @@ export function LoginScreen({
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [apiStatusError, setApiStatusError] = useState<string | null>(null);
+
+  const fetchAuthStatus = async () => {
+    setLoadingStatus(true);
+    setApiStatusError(null);
+    try {
+      const res = await fetch('/api/auth/status');
+      const data = await parseJsonSafe<AuthStatusResponse & { error?: string }>(res);
+      if (res.ok && data && typeof data.adminConfigured === 'boolean') {
+        setStatus(data);
+        setApiStatusError(null);
+      } else if (res.status === 404) {
+        setApiStatusError(
+          'Backend authentication API returned HTTP 404. Ensure the full-stack project (including api/router.js and vercel.json, not just static dist/) is deployed with /api routes active.',
+        );
+      } else {
+        setApiStatusError(
+          data?.error ||
+            `Clinic auth API returned an unexpected response (HTTP ${res.status}). Check server deployment.`,
+        );
+      }
+    } catch {
+      setApiStatusError(
+        'Unable to reach clinic authentication service. Please check your connection.',
+      );
+    } finally {
+      setLoadingStatus(false);
+    }
+  };
 
   useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const res = await fetch('/api/auth/status');
-        const data = await parseJsonSafe<AuthStatusResponse & { error?: string }>(res);
-        if (!active) return;
-        if (res.ok && data && typeof data.adminConfigured === 'boolean') {
-          setStatus(data);
-        } else {
-          setError(
-            data?.error ||
-              `Clinic auth API returned an unexpected response (HTTP ${res.status}). Check server deployment.`,
-          );
-        }
-      } catch {
-        if (active) {
-          setError('Unable to reach clinic authentication service. Please check your connection.');
-        }
-      } finally {
-        if (active) setLoadingStatus(false);
-      }
-    })();
-    return () => {
-      active = false;
-    };
+    void fetchAuthStatus();
   }, []);
 
   const handleRoleSwitch = (role: UserRole) => {
@@ -117,6 +124,13 @@ export function LoginScreen({
       }>(res);
 
       if (!res.ok || !data?.token || !data?.user) {
+        if (res.status === 404) {
+          setApiStatusError(
+            'Backend authentication API returned HTTP 404. Ensure the full-stack project (including api/router.js and vercel.json, not just static dist/) is deployed with /api routes active.',
+          );
+        } else {
+          setApiStatusError(null);
+        }
         setError(
           data?.error ||
             (res.ok
@@ -125,6 +139,7 @@ export function LoginScreen({
         );
         return;
       }
+      setApiStatusError(null);
       onAuthenticated({ token: data.token, user: data.user });
     } catch {
       setError('Could not connect to clinic login service. Please check your network and try again.');
@@ -175,6 +190,13 @@ export function LoginScreen({
         error?: string;
       }>(res);
       if (!res.ok || !data?.token || !data?.user) {
+        if (res.status === 404) {
+          setApiStatusError(
+            'Backend authentication API returned HTTP 404. Ensure the full-stack project (including api/router.js and vercel.json, not just static dist/) is deployed with /api routes active.',
+          );
+        } else {
+          setApiStatusError(null);
+        }
         setError(
           data?.error ||
             (res.ok
@@ -183,6 +205,7 @@ export function LoginScreen({
         );
         return;
       }
+      setApiStatusError(null);
       onAuthenticated({ token: data.token, user: data.user });
     } catch {
       setError('Could not connect to clinic setup service. Please check your network and try again.');
@@ -231,6 +254,26 @@ export function LoginScreen({
         </div>
 
         <div className="p-5 sm:p-6">
+          {apiStatusError && !loadingStatus && (
+            <div
+              role="alert"
+              className="mb-4 flex flex-col gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950 dark:border-amber-800/80 dark:bg-amber-950/40 dark:text-amber-200"
+            >
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-300" aria-hidden="true" />
+                <p className="leading-relaxed">{apiStatusError}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void fetchAuthStatus()}
+                className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-[#111E2B] dark:text-amber-200 dark:hover:bg-amber-900/40"
+              >
+                <RefreshCw className="h-3 w-3" aria-hidden="true" />
+                <span>Retry Connection</span>
+              </button>
+            </div>
+          )}
+
           {loadingStatus ? (
             <div className="space-y-3 py-4">
               <div className="h-10 animate-pulse rounded-xl bg-[#E8F6FB] dark:bg-[#152534]" />

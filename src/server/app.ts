@@ -56,9 +56,18 @@ export function createApiApp(): Express {
   const app = express();
   const jsonParser = express.json();
   app.use((req, res, next) => {
-    if (req.body && typeof req.body === 'object') {
+    if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
       next();
       return;
+    }
+    if (typeof req.body === 'string' && req.body.trim().startsWith('{')) {
+      try {
+        req.body = JSON.parse(req.body);
+        next();
+        return;
+      } catch {
+        // Fall through to express.json()
+      }
     }
     jsonParser(req, res, next);
   });
