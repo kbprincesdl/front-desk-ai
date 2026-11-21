@@ -824,9 +824,14 @@ export function StaffQueue({ authSession, onLogout }: StaffQueueProps) {
         onLogout();
         return;
       }
-      const data = (await res.json()) as { error?: string };
+      let data: { error?: string } | null = null;
+      try {
+        data = (await res.json()) as { error?: string };
+      } catch {
+        data = null;
+      }
       if (!res.ok) {
-        setUserError(data.error || 'Could not save user account.');
+        setUserError(data?.error || `Could not save user account (HTTP ${res.status}).`);
         return;
       }
       setNewUsername('');
@@ -853,8 +858,14 @@ export function StaffQueue({ authSession, onLogout }: StaffQueueProps) {
         return;
       }
       if (!res.ok) {
-        const data = (await res.json()) as { error?: string };
-        setUserError(data.error || 'Could not delete user.');
+        let msg = `Could not delete user (HTTP ${res.status}).`;
+        try {
+          const data = (await res.json()) as { error?: string };
+          if (data?.error) msg = data.error;
+        } catch {
+          // Ignore non-JSON error
+        }
+        setUserError(msg);
         return;
       }
       await loadData();

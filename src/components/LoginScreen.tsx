@@ -17,6 +17,16 @@ interface LoginScreenProps {
   initialRole?: UserRole;
 }
 
+async function parseJsonSafe<T>(res: Response): Promise<T | null> {
+  try {
+    const text = await res.text();
+    if (!text) return null;
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
 export function LoginScreen({
   onAuthenticated,
   onBackToChat,
@@ -49,13 +59,19 @@ export function LoginScreen({
     (async () => {
       try {
         const res = await fetch('/api/auth/status');
-        if (res.ok) {
-          const data = (await res.json()) as AuthStatusResponse;
-          if (active) setStatus(data);
+        const data = await parseJsonSafe<AuthStatusResponse & { error?: string }>(res);
+        if (!active) return;
+        if (res.ok && data && typeof data.adminConfigured === 'boolean') {
+          setStatus(data);
+        } else {
+          setError(
+            data?.error ||
+              `Clinic auth API returned an unexpected response (HTTP ${res.status}). Check server deployment.`,
+          );
         }
       } catch {
         if (active) {
-          setError('Unable to reach clinic authentication service.');
+          setError('Unable to reach clinic authentication service. Please check your connection.');
         }
       } finally {
         if (active) setLoadingStatus(false);
@@ -94,18 +110,24 @@ export function LoginScreen({
           expectedRole: selectedRole,
         }),
       });
-      const data = (await res.json()) as {
+      const data = await parseJsonSafe<{
         token?: string;
         user?: AuthSessionState['user'];
         error?: string;
-      };
-      if (!res.ok || !data.token || !data.user) {
-        setError(data.error || 'Sign in failed. Check your username and password.');
+      }>(res);
+
+      if (!res.ok || !data?.token || !data?.user) {
+        setError(
+          data?.error ||
+            (res.ok
+              ? 'Invalid response from clinic login API.'
+              : `Sign in failed (HTTP ${res.status}). Ensure /api backend routes are active.`),
+        );
         return;
       }
       onAuthenticated({ token: data.token, user: data.user });
     } catch {
-      setError('Network error while signing in. Please try again.');
+      setError('Could not connect to clinic login service. Please check your network and try again.');
     } finally {
       setSubmitting(false);
     }
@@ -147,18 +169,23 @@ export function LoginScreen({
           staffPassword: showSetupStaff && setupStaffPass ? setupStaffPass : undefined,
         }),
       });
-      const data = (await res.json()) as {
+      const data = await parseJsonSafe<{
         token?: string;
         user?: AuthSessionState['user'];
         error?: string;
-      };
-      if (!res.ok || !data.token || !data.user) {
-        setError(data.error || 'Could not complete portal setup.');
+      }>(res);
+      if (!res.ok || !data?.token || !data?.user) {
+        setError(
+          data?.error ||
+            (res.ok
+              ? 'Invalid response from portal setup API.'
+              : `Portal setup failed (HTTP ${res.status}). Ensure /api backend routes are active.`),
+        );
         return;
       }
       onAuthenticated({ token: data.token, user: data.user });
     } catch {
-      setError('Network error during portal setup. Please try again.');
+      setError('Could not connect to clinic setup service. Please check your network and try again.');
     } finally {
       setSubmitting(false);
     }
