@@ -14,7 +14,17 @@ import type {
   PatientVisit,
   Ticket,
   TicketStatus,
+  UserRole,
 } from '../types/clinic.ts';
+
+export interface StoredAuthUser {
+  id: string;
+  username: string;
+  displayName: string;
+  role: UserRole;
+  passwordHash: string;
+  createdAt: string;
+}
 
 interface StoreState {
   sessions: Record<string, ChatMessage[]>;
@@ -23,6 +33,7 @@ interface StoreState {
   doctors: ClinicDoctor[];
   visits: PatientVisit[];
   feedbacks: CustomerFeedback[];
+  users: StoredAuthUser[];
 }
 
 function resolveWritableDataDir(): string {
@@ -112,6 +123,7 @@ function loadInitialState(): StoreState {
             : defaultDoctors(),
         visits: Array.isArray(parsed.visits) ? parsed.visits : [],
         feedbacks: Array.isArray(parsed.feedbacks) ? parsed.feedbacks : [],
+        users: Array.isArray(parsed.users) ? parsed.users : [],
       };
     }
   } catch (err) {
@@ -124,6 +136,7 @@ function loadInitialState(): StoreState {
     doctors: defaultDoctors(),
     visits: [],
     feedbacks: [],
+    users: [],
   };
 }
 
@@ -558,3 +571,56 @@ export function getAdminAnalytics(): AdminAnalytics {
     },
   };
 }
+
+// --- Portal Auth Users (Admin & Staff) ---
+export function listStoredUsers(): StoredAuthUser[] {
+  return [...state.users];
+}
+
+export function findStoredUserByUsername(username: string): StoredAuthUser | undefined {
+  const normalized = username.trim().toLowerCase();
+  return state.users.find((u) => u.username.toLowerCase() === normalized);
+}
+
+export function upsertStoredUser(input: {
+  username: string;
+  displayName: string;
+  role: UserRole;
+  passwordHash: string;
+}): StoredAuthUser {
+  const normalized = input.username.trim().toLowerCase();
+  const existingIdx = state.users.findIndex((u) => u.username.toLowerCase() === normalized);
+  if (existingIdx !== -1) {
+    const updated: StoredAuthUser = {
+      ...state.users[existingIdx],
+      username: normalized,
+      displayName: input.displayName.trim(),
+      role: input.role,
+      passwordHash: input.passwordHash,
+    };
+    state.users[existingIdx] = updated;
+    persistState();
+    return updated;
+  }
+
+  const created: StoredAuthUser = {
+    id: `USR-${state.users.length + 101}-${crypto.randomBytes(2).toString('hex')}`,
+    username: normalized,
+    displayName: input.displayName.trim(),
+    role: input.role,
+    passwordHash: input.passwordHash,
+    createdAt: new Date().toISOString(),
+  };
+  state.users.push(created);
+  persistState();
+  return created;
+}
+
+export function deleteStoredUser(id: string): boolean {
+  const before = state.users.length;
+  state.users = state.users.filter((u) => u.id !== id);
+  if (state.users.length === before) return false;
+  persistState();
+  return true;
+}
+

@@ -47,7 +47,14 @@ export function CustomerFeedbackBanner({
         }),
       });
       if (!res.ok) {
-        throw new Error('Could not save feedback.');
+        let msg = 'Could not save feedback.';
+        try {
+          const errData = (await res.json()) as { error?: string };
+          if (errData?.error) msg = errData.error;
+        } catch {
+          // Ignore non-JSON error
+        }
+        throw new Error(msg);
       }
       const data = (await res.json()) as { feedback: CustomerFeedback };
       onFeedbackAdded(data.feedback);
@@ -66,21 +73,21 @@ export function CustomerFeedbackBanner({
   return (
     <section
       aria-label="Patient feedback showcase"
-      className="mb-5 rounded-2xl border border-[#EFE2D3] bg-[#FFFDF9] p-4 shadow-sm sm:px-5 sm:py-4 dark:border-slate-800 dark:bg-slate-900"
+      className="mb-5 rounded-2xl border border-[#CBE2EE] bg-gradient-to-r from-[#E8F6FB] via-[#F4FAFD] to-[#EBF4FF] p-4 shadow-sm sm:px-5 sm:py-4 dark:border-[#1E3347] dark:from-[#0F2433] dark:via-[#111E2B] dark:to-[#0F2033]"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FFF0E5] text-[#C84635] dark:bg-orange-950/50 dark:text-orange-300">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#0E7490] text-white shadow-xs dark:bg-cyan-600">
             <MessageSquareHeart className="h-4 w-4" aria-hidden="true" />
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-              <h2 className="font-display text-sm font-bold text-stone-900 dark:text-[#FAF5EF]">
+              <h2 className="font-display text-sm font-bold text-slate-900 dark:text-slate-50">
                 Patient Feedback Showcase
               </h2>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-stone-600 tabular-nums dark:text-slate-400">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 tabular-nums dark:text-slate-300">
                 {averageRating > 0 && (
-                  <span className="inline-flex items-center gap-1 font-semibold text-stone-800 dark:text-slate-200">
+                  <span className="inline-flex items-center gap-1 font-semibold text-slate-900 dark:text-slate-100">
                     <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" aria-hidden="true" />
                     {averageRating} / 5 ({feedbacks.length})
                   </span>
@@ -88,14 +95,14 @@ export function CustomerFeedbackBanner({
                 {helpfulPct !== null && (
                   <>
                     {averageRating > 0 && <span aria-hidden="true">·</span>}
-                    <span className="inline-flex items-center gap-1 font-medium text-teal-800 dark:text-teal-300">
+                    <span className="inline-flex items-center gap-1 font-semibold text-[#0E7490] dark:text-cyan-300">
                       <ThumbsUp className="h-3 w-3" aria-hidden="true" />
                       {helpfulPct}% helpful chat replies ({helpfulCount}/{totalBotRatings})
                     </span>
                   </>
                 )}
                 {averageRating === 0 && helpfulPct === null && (
-                  <span>Verified reviews & live reply ratings appear here</span>
+                  <span>Verified patient reviews & live reply ratings appear here</span>
                 )}
               </div>
             </div>
@@ -105,7 +112,7 @@ export function CustomerFeedbackBanner({
         <button
           type="button"
           onClick={() => setFormOpen((o) => !o)}
-          className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-[#E7D8C5] bg-[#FFF9F2] px-3 py-1.5 text-xs font-semibold text-stone-800 transition-colors hover:border-[#C84635] hover:text-[#B23A2A] whitespace-nowrap shrink-0 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-orange-400"
+          className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-[#BDD8E7] bg-white px-3 py-1.5 text-xs font-semibold text-[#0E7490] transition-colors hover:border-[#0E7490] hover:bg-[#E6F4F9] whitespace-nowrap shrink-0 dark:border-[#243B52] dark:bg-[#152534] dark:text-cyan-300 dark:hover:border-cyan-400"
         >
           {formOpen ? (
             <>
@@ -125,7 +132,7 @@ export function CustomerFeedbackBanner({
       {formOpen && (
         <form
           onSubmit={handleSubmit}
-          className="mt-3 grid grid-cols-1 gap-2.5 border-t border-[#F2E7DA] pt-3 sm:grid-cols-4 dark:border-slate-800"
+          className="mt-3 grid grid-cols-1 gap-2.5 border-t border-[#CBE2EE] pt-3 sm:grid-cols-3 dark:border-[#1E3347]"
         >
           <input
             type="text"
@@ -134,13 +141,13 @@ export function CustomerFeedbackBanner({
             onChange={(e) => setPatientName(e.target.value)}
             placeholder="Your name"
             aria-label="Your name"
-            className="min-h-[38px] rounded-lg border border-[#E7D8C5] bg-white px-3 text-base text-stone-900 sm:text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            className="min-h-[38px] rounded-lg border border-[#BDD8E7] bg-white px-3 text-base text-slate-900 sm:text-xs dark:border-[#243B52] dark:bg-[#0B141C] dark:text-slate-100"
           />
           <select
             value={doctorName}
             onChange={(e) => setDoctorName(e.target.value)}
             aria-label="Doctor visited"
-            className="min-h-[38px] rounded-lg border border-[#E7D8C5] bg-white px-3 text-base text-stone-900 sm:text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            className="min-h-[38px] rounded-lg border border-[#BDD8E7] bg-white px-3 text-base text-slate-900 sm:text-xs dark:border-[#243B52] dark:bg-[#0B141C] dark:text-slate-100"
           >
             <option value="">General Clinic Experience</option>
             {doctors.map((d) => (
@@ -153,7 +160,7 @@ export function CustomerFeedbackBanner({
             value={rating}
             onChange={(e) => setRating(Number(e.target.value))}
             aria-label="Star rating"
-            className="min-h-[38px] rounded-lg border border-[#E7D8C5] bg-white px-3 text-base text-stone-900 sm:text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            className="min-h-[38px] rounded-lg border border-[#BDD8E7] bg-white px-3 text-base text-slate-900 sm:text-xs dark:border-[#243B52] dark:bg-[#0B141C] dark:text-slate-100"
           >
             <option value={5}>5 Stars — Excellent</option>
             <option value={4}>4 Stars — Very Good</option>
@@ -161,7 +168,7 @@ export function CustomerFeedbackBanner({
             <option value={2}>2 Stars — Fair</option>
             <option value={1}>1 Star — Needs Improvement</option>
           </select>
-          <div className="flex gap-2 sm:col-span-4">
+          <div className="flex gap-2 sm:col-span-3">
             <input
               type="text"
               required
@@ -169,18 +176,18 @@ export function CustomerFeedbackBanner({
               onChange={(e) => setComment(e.target.value)}
               placeholder="Write your feedback about the clinic or dentist..."
               aria-label="Feedback comment"
-              className="min-h-[38px] min-w-0 flex-1 rounded-lg border border-[#E7D8C5] bg-white px-3 text-base text-stone-900 sm:text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+              className="min-h-[38px] min-w-0 flex-1 rounded-lg border border-[#BDD8E7] bg-white px-3 text-base text-slate-900 sm:text-xs dark:border-[#243B52] dark:bg-[#0B141C] dark:text-slate-100"
             />
             <button
               type="submit"
               disabled={isSubmitting}
-              className="min-h-[38px] rounded-lg bg-teal-700 px-4 text-xs font-semibold text-white hover:bg-teal-800 disabled:opacity-50 whitespace-nowrap shrink-0 dark:bg-teal-600"
+              className="min-h-[38px] rounded-lg bg-[#0E7490] px-4 text-xs font-semibold text-white hover:bg-[#155E75] disabled:opacity-50 whitespace-nowrap shrink-0 dark:bg-cyan-600 dark:hover:bg-cyan-500"
             >
               {isSubmitting ? 'Saving...' : 'Submit'}
             </button>
           </div>
           {error && (
-            <p role="alert" className="text-xs text-red-600 sm:col-span-4 dark:text-red-400">
+            <p role="alert" className="text-xs text-red-600 sm:col-span-3 dark:text-red-400">
               {error}
             </p>
           )}
@@ -189,14 +196,14 @@ export function CustomerFeedbackBanner({
 
       {/* Showcased Patient Feedback Cards */}
       {feedbacks.length > 0 && (
-        <div className="mt-3 grid grid-cols-1 gap-2.5 border-t border-[#F2E7DA] pt-3 sm:grid-cols-3 dark:border-slate-800">
+        <div className="mt-3 grid grid-cols-1 gap-2.5 border-t border-[#CBE2EE] pt-3 sm:grid-cols-3 dark:border-[#1E3347]">
           {feedbacks.slice(0, 3).map((fb) => (
             <div
               key={fb.id}
-              className="rounded-xl border border-[#F0E4D6] bg-[#FFF9F2] p-3 text-xs dark:border-slate-800 dark:bg-slate-800/50"
+              className="rounded-xl border border-[#D4E6F1] bg-white p-3 text-xs shadow-xs dark:border-[#1E3347] dark:bg-[#111E2B]"
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="font-bold text-stone-900 truncate dark:text-slate-100">
+                <span className="font-bold text-slate-900 truncate dark:text-slate-100">
                   {fb.patientName}
                 </span>
                 <span className="inline-flex items-center gap-0.5 font-semibold tabular-nums text-amber-600 dark:text-amber-400 shrink-0">
@@ -204,11 +211,11 @@ export function CustomerFeedbackBanner({
                   {fb.rating}.0
                 </span>
               </div>
-              <p className="mt-1 line-clamp-2 leading-relaxed text-stone-700 dark:text-slate-300">
+              <p className="mt-1 line-clamp-2 leading-relaxed text-slate-700 dark:text-slate-300">
                 “{fb.comment}”
               </p>
               {fb.doctorName && (
-                <p className="mt-1 text-[11px] font-medium text-teal-800 dark:text-teal-300">
+                <p className="mt-1 text-[11px] font-medium text-[#0E7490] dark:text-cyan-300">
                   {fb.doctorName}
                 </p>
               )}

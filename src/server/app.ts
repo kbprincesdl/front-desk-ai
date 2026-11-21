@@ -2,7 +2,18 @@ import 'dotenv/config';
 import express from 'express';
 import type { Express, Request, Response } from 'express';
 import { CLINIC_DATA } from '../data/clinicData.ts';
-import { generateFrontDeskReply } from './assistant.ts';
+import { generateFrontDeskReply, synthesizeIndianSpeech } from './assistant.ts';
+import {
+  authenticateUser,
+  createOrUpdateUserAccount,
+  getAuthStatus,
+  listPublicUsers,
+  removeUserAccount,
+  requireAuth,
+  setupInitialCredentials,
+  signAuthToken,
+  type AuthenticatedRequest,
+} from './auth.ts';
 import {
   addCustomerFeedback,
   addDoctor,
@@ -29,6 +40,7 @@ import type {
   FeedbackValue,
   LanguageCode,
   TicketStatus,
+  UserRole,
 } from '../types/clinic.ts';
 
 const VALID_STATUSES: TicketStatus[] = ['answered', 'needs human', 'urgent', 'closed'];
@@ -48,6 +60,99 @@ export function createApiApp(): Express {
     res.json({ ok: true });
   });
 
+  // --- Portal Authentication & Role Management ---
+  app.get('/api/auth/status', (_req: Request, res: Response) => {
+    res.json(getAuthStatus());
+  });
+
+  app.post('/api/auth/setup', (req: Request, res: Response) => {
+    const adminUsername =
+      typeof req.body?.adminUsername === 'string' ? req.body.adminUsername : 'admin';
+    const adminDisplayName =
+      typeof req.body?.adminDisplayName === 'string' ? req.body.adminDisplayName : 'Clinic Admin';
+    const adminPassword =
+      typeof req.body?.adminPassword === 'string' ? req.body.adminPassword : '';
+    const staffUsername =
+      typeof req.body?.staffUsername === 'string' ? req.body.staffUsername : 'staff';
+    const staffDisplayName =
+      typeof req.body?.staffDisplayName === 'string' ? req.body.staffDisplayName : 'Front Desk Staff';
+    const staffPassword =
+      typeof req.body?.staffPassword === 'string' ? req.body.staffPassword : '';
+
+    const result = setupInitialCredentials({
+      adminUsername,
+      adminDisplayName,
+      adminPassword,
+      staffUsername,
+      staffDisplayName,
+      staffPassword,
+    });
+
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+
+    const token = signAuthToken(result.user);
+    res.status(201).json({ token, user: result.user });
+  });
+
+  app.post('/api/auth/login', (req: Request, res: Response) => {
+    const username = typeof req.body?.username === 'string' ? req.body.username : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const expectedRole =
+      req.body?.expectedRole === 'admin' || req.body?.expectedRole === 'staff'
+        ? (req.body.expectedRole as UserRole)
+        : undefined;
+
+    const result = authenticateUser({ username, password, expectedRole });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+
+    const token = signAuthToken(result.user);
+    res.json({ token, user: result.user });
+  });
+
+  app.get('/api/auth/me', requireAuth(['admin', 'staff']), (req: AuthenticatedRequest, res: Response) => {
+    res.json({ user: req.authUser });
+  });
+
+  app.get('/api/auth/users', requireAuth(['admin']), (_req: Request, res: Response) => {
+    res.json({ users: listPublicUsers() });
+  });
+
+  app.post('/api/auth/users', requireAuth(['admin']), (req: Request, res: Response) => {
+    const username = typeof req.body?.username === 'string' ? req.body.username : '';
+    const displayName = typeof req.body?.displayName === 'string' ? req.body.displayName : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const role: UserRole = req.body?.role === 'admin' ? 'admin' : 'staff';
+
+    const result = createOrUpdateUserAccount({ username, displayName, role, password });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+
+    res.status(201).json({ user: result.user });
+  });
+
+  app.delete('/api/auth/users/:id', requireAuth(['admin']), (req: AuthenticatedRequest, res: Response) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      res.status(400).json({ error: 'User id is required.' });
+      return;
+    }
+    const result = removeUserAccount(id, req.authUser?.id ?? '');
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
+  // --- Public Clinic Info & Directory Read ---
   app.get('/api/clinic', (_req: Request, res: Response) => {
     res.json({
       ...CLINIC_DATA,
@@ -55,12 +160,12 @@ export function createApiApp(): Express {
     });
   });
 
-  // --- Doctors Directory CRUD ---
   app.get('/api/doctors', (_req: Request, res: Response) => {
     res.json({ doctors: listDoctors() });
   });
 
-  app.post('/api/doctors', (req: Request, res: Response) => {
+  // --- Admin-only Doctors Directory CRUD ---
+  app.post('/api/doctors', requireAuth(['admin']), (req: Request, res: Response) => {
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
     const role = typeof req.body?.role === 'string' ? req.body.role.trim() : '';
     const days = typeof req.body?.days === 'string' ? req.body.days.trim() : '';
@@ -77,7 +182,7 @@ export function createApiApp(): Express {
     res.status(201).json({ doctor });
   });
 
-  app.put('/api/doctors/:id', (req: Request, res: Response) => {
+  app.put('/api/doctors/:id', requireAuth(['admin']), (req: Request, res: Response) => {
     const id = String(req.params.id || '').trim();
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
     const role = typeof req.body?.role === 'string' ? req.body.role.trim() : '';
@@ -99,7 +204,7 @@ export function createApiApp(): Express {
     res.json({ doctor: updated });
   });
 
-  app.delete('/api/doctors/:id', (req: Request, res: Response) => {
+  app.delete('/api/doctors/:id', requireAuth(['admin']), (req: Request, res: Response) => {
     const id = String(req.params.id || '').trim();
     if (!id) {
       res.status(400).json({ error: 'Doctor id is required.' });
@@ -113,7 +218,7 @@ export function createApiApp(): Express {
     res.json({ ok: true });
   });
 
-  // --- Chat ---
+  // --- Patient Chat & Indian Voice TTS ---
   app.get('/api/chat/:sessionId', (req: Request, res: Response) => {
     const sessionId = String(req.params.sessionId || '').trim();
     if (!sessionId) {
@@ -169,6 +274,30 @@ export function createApiApp(): Express {
     });
   });
 
+  app.post('/api/tts', async (req: Request, res: Response) => {
+    const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    const language: LanguageCode =
+      req.body?.language === 'hi' || req.body?.language === 'te' || req.body?.language === 'en'
+        ? (req.body.language as LanguageCode)
+        : 'en';
+
+    if (!text) {
+      res.status(400).json({ error: 'Text is required for speech synthesis.' });
+      return;
+    }
+
+    const result = await synthesizeIndianSpeech(text, language);
+    if (!result) {
+      res.status(503).json({
+        error: 'Server AI voice unavailable; using browser voice.',
+        fallbackToBrowser: true,
+      });
+      return;
+    }
+
+    res.json(result);
+  });
+
   app.patch('/api/chat/:sessionId/messages/:messageId/feedback', (req: Request, res: Response) => {
     const sessionId = String(req.params.sessionId || '').trim();
     const messageId = String(req.params.messageId || '').trim();
@@ -188,12 +317,12 @@ export function createApiApp(): Express {
     res.json({ message: updated });
   });
 
-  // --- Tickets ---
-  app.get('/api/tickets', (_req: Request, res: Response) => {
+  // --- Staff & Admin Tickets ---
+  app.get('/api/tickets', requireAuth(['staff', 'admin']), (_req: Request, res: Response) => {
     res.json({ tickets: listTickets() });
   });
 
-  app.post('/api/tickets/:id/reply', (req: Request, res: Response) => {
+  app.post('/api/tickets/:id/reply', requireAuth(['staff', 'admin']), (req: Request, res: Response) => {
     const ticketId = String(req.params.id || '').trim();
     const reply = typeof req.body?.reply === 'string' ? req.body.reply.trim() : '';
 
@@ -211,7 +340,7 @@ export function createApiApp(): Express {
     res.json({ ticket: updated });
   });
 
-  app.patch('/api/tickets/:id/status', (req: Request, res: Response) => {
+  app.patch('/api/tickets/:id/status', requireAuth(['staff', 'admin']), (req: Request, res: Response) => {
     const ticketId = String(req.params.id || '').trim();
     const status = req.body?.status as TicketStatus;
 
@@ -229,8 +358,8 @@ export function createApiApp(): Express {
     res.json({ ticket: updated });
   });
 
-  // --- Appointments ---
-  app.get('/api/appointments', (_req: Request, res: Response) => {
+  // --- Appointments (Patient Create is Public; Staff/Admin Manage) ---
+  app.get('/api/appointments', requireAuth(['staff', 'admin']), (_req: Request, res: Response) => {
     res.json({ appointments: listAppointments() });
   });
 
@@ -272,7 +401,7 @@ export function createApiApp(): Express {
     res.status(201).json({ appointment });
   });
 
-  app.patch('/api/appointments/:id', (req: Request, res: Response) => {
+  app.patch('/api/appointments/:id', requireAuth(['staff', 'admin']), (req: Request, res: Response) => {
     const id = String(req.params.id || '').trim();
     const status = req.body?.status as AppointmentStatus;
     const staffNote = typeof req.body?.staffNote === 'string' ? req.body.staffNote : undefined;
@@ -292,11 +421,11 @@ export function createApiApp(): Express {
   });
 
   // --- Daily Patient Visits & Admin Analytics ---
-  app.get('/api/visits', (_req: Request, res: Response) => {
+  app.get('/api/visits', requireAuth(['staff', 'admin']), (_req: Request, res: Response) => {
     res.json({ visits: listVisits() });
   });
 
-  app.post('/api/visits', (req: Request, res: Response) => {
+  app.post('/api/visits', requireAuth(['staff', 'admin']), (req: Request, res: Response) => {
     const doctorId = typeof req.body?.doctorId === 'string' ? req.body.doctorId.trim() : undefined;
     let doctorName = typeof req.body?.doctorName === 'string' ? req.body.doctorName.trim() : '';
     if (!doctorName && doctorId) {
@@ -322,7 +451,7 @@ export function createApiApp(): Express {
     res.status(201).json({ visit });
   });
 
-  // --- Customer Feedback Showcase ---
+  // --- Customer Feedback Showcase (Public) ---
   app.get('/api/feedback', (_req: Request, res: Response) => {
     const analytics = getAdminAnalytics();
     res.json({
@@ -346,7 +475,8 @@ export function createApiApp(): Express {
     res.status(201).json({ feedback });
   });
 
-  app.get('/api/analytics', (_req: Request, res: Response) => {
+  // --- Admin-only Analytics ---
+  app.get('/api/analytics', requireAuth(['admin']), (_req: Request, res: Response) => {
     res.json(getAdminAnalytics());
   });
 

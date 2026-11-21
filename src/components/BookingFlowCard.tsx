@@ -69,7 +69,10 @@ function getValidDatesForDoctor(
   doctors: ClinicDoctor[],
 ): { dateISO: string; label: string }[] {
   const doc = doctors.find((d) => d.name === doctorName);
-  const allowedDayNames = new Set(doc?.activeDays ?? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
+  const docDays = Array.isArray(doc?.activeDays) && doc.activeDays.length > 0
+    ? doc.activeDays
+    : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const allowedDayNames = new Set(docDays);
   const results: { dateISO: string; label: string }[] = [];
 
   const now = new Date();
@@ -316,25 +319,25 @@ export function BookingFlowCard({
   };
 
   return (
-    <div className="rounded-2xl border border-[#E7D8C5] bg-[#FFFDF9] p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800/90">
-      <div className="flex items-center justify-between gap-2 border-b border-[#F2E7DA] pb-2.5 dark:border-slate-700">
+    <div className="rounded-2xl border border-[#CBE2EE] bg-[#F6FBFE] p-4 shadow-sm dark:border-[#243B52] dark:bg-[#152534]">
+      <div className="flex items-center justify-between gap-2 border-b border-[#DCEBF3] pb-2.5 dark:border-[#1E3347]">
         <div className="flex items-center gap-2">
           {step > 1 && step < 5 && (
             <button
               type="button"
               onClick={() => setStep((s) => (s > 1 ? ((s - 1) as 1 | 2 | 3 | 4) : 1))}
               aria-label="Go back"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-stone-600 hover:bg-[#F4EAE0] dark:text-slate-300 dark:hover:bg-slate-700"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 hover:bg-[#E1F0F7] dark:text-slate-300 dark:hover:bg-[#1E3347]"
             >
               <ArrowLeft className="h-4 w-4" />
             </button>
           )}
           <div>
-            <p className="font-display text-sm font-bold text-stone-900 dark:text-slate-50">
+            <p className="font-display text-sm font-bold text-slate-900 dark:text-slate-50">
               {heading}
             </p>
             {step < 5 && (
-              <p className="text-[11px] text-stone-500 tabular-nums dark:text-slate-400">
+              <p className="text-[11px] text-slate-500 tabular-nums dark:text-slate-400">
                 Step {step} of 4 · Confirmed by front desk staff
               </p>
             )}
@@ -344,7 +347,7 @@ export function BookingFlowCard({
           type="button"
           onClick={onClose}
           aria-label="Close booking flow"
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-stone-500 hover:bg-[#F4EAE0] dark:text-slate-400 dark:hover:bg-slate-700"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-[#E1F0F7] dark:text-slate-400 dark:hover:bg-[#1E3347]"
         >
           <X className="h-4 w-4" />
         </button>
@@ -353,7 +356,7 @@ export function BookingFlowCard({
       {/* Step 1: Reason */}
       {step === 1 && (
         <div className="mt-3 space-y-2">
-          <p className="text-xs font-medium text-stone-700 dark:text-slate-300">
+          <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
             1. Choose a reason for your visit
           </p>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -362,12 +365,12 @@ export function BookingFlowCard({
                 key={opt.id}
                 type="button"
                 onClick={() => handleSelectReason(opt)}
-                className="flex flex-col items-start rounded-xl border border-[#E7D8C5] bg-white p-3 text-left transition-colors hover:border-teal-600 hover:bg-teal-50/40 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-teal-400"
+                className="flex flex-col items-start rounded-xl border border-[#CFE3EE] bg-white p-3 text-left transition-colors hover:border-[#0E7490] hover:bg-[#ECFAF6]/60 dark:border-[#243B52] dark:bg-[#0F1B26] dark:hover:border-cyan-400"
               >
-                <span className="text-xs font-bold text-stone-900 dark:text-slate-100">
+                <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
                   {opt.label}
                 </span>
-                <span className="mt-0.5 text-[11px] text-stone-600 dark:text-slate-400">
+                <span className="mt-0.5 text-[11px] text-slate-600 dark:text-slate-400">
                   {opt.sub}
                 </span>
               </button>
@@ -379,11 +382,11 @@ export function BookingFlowCard({
       {/* Step 2: Doctor (auto-suggested) */}
       {step === 2 && reason && (
         <div className="mt-3 space-y-2.5">
-          <p className="text-xs font-medium text-stone-700 dark:text-slate-300">
+          <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
             2. Choose a doctor (suggested for {reason.label})
           </p>
           {reason.id === 'child' && (
-            <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">
+            <p className="rounded-lg bg-sky-50 px-3 py-2 text-[11px] text-sky-900 dark:bg-sky-950/50 dark:text-sky-200">
               Children under 14 are seen exclusively by Dr. Sneha Rao on Saturdays. A parent must be present.
             </p>
           )}
@@ -406,25 +409,25 @@ export function BookingFlowCard({
                   onClick={() => handleSelectDoctor(doc.name)}
                   className={`flex w-full items-center justify-between gap-2 rounded-xl border p-3 text-left transition-colors ${
                     disabled
-                      ? 'cursor-not-allowed border-stone-200 bg-stone-50 opacity-45 dark:border-slate-800 dark:bg-slate-900/40'
+                      ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-45 dark:border-slate-800 dark:bg-slate-900/40'
                       : isSuggested
-                        ? 'border-teal-600 bg-teal-50/60 hover:bg-teal-50 dark:border-teal-500 dark:bg-teal-950/40'
-                        : 'border-[#E7D8C5] bg-white hover:border-teal-600 dark:border-slate-700 dark:bg-slate-900'
+                        ? 'border-[#0E7490] bg-[#E8F6FB] hover:bg-[#DCF1F9] dark:border-cyan-500 dark:bg-cyan-950/40'
+                        : 'border-[#CFE3EE] bg-white hover:border-[#0E7490] dark:border-[#243B52] dark:bg-[#0F1B26]'
                   }`}
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs font-bold text-stone-900 dark:text-slate-100">
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
                         {doc.name}
                       </span>
                       {isSuggested && (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700 dark:text-teal-300">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#0E7490] dark:text-cyan-300">
                           <UserCheck className="h-3 w-3" />
                           Suggested
                         </span>
                       )}
                     </div>
-                    <p className="mt-0.5 text-[11px] text-stone-600 dark:text-slate-400">
+                    <p className="mt-0.5 text-[11px] text-slate-600 dark:text-slate-400">
                       {doc.role} · {doc.days}
                     </p>
                   </div>
@@ -438,12 +441,12 @@ export function BookingFlowCard({
       {/* Step 3: Valid Date & Time Slot (Lunch & Sunday blocked) */}
       {step === 3 && (
         <div className="mt-3 space-y-3">
-          <p className="text-xs font-medium text-stone-700 dark:text-slate-300">
+          <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
             3. Pick a date & time for {doctorName}
           </p>
 
           <div>
-            <p className="mb-1.5 text-[11px] font-medium text-stone-500 dark:text-slate-400">
+            <p className="mb-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
               Available dates (Sundays closed for routine bookings)
             </p>
             <div className="flex flex-wrap gap-1.5">
@@ -456,8 +459,8 @@ export function BookingFlowCard({
                     onClick={() => setSelectedDate(d)}
                     className={`min-h-[36px] rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
                       active
-                        ? 'border-teal-700 bg-teal-700 text-white dark:border-teal-500 dark:bg-teal-600'
-                        : 'border-[#E7D8C5] bg-white text-stone-800 hover:border-teal-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
+                        ? 'border-[#0E7490] bg-[#0E7490] text-white dark:border-cyan-500 dark:bg-cyan-600'
+                        : 'border-[#CFE3EE] bg-white text-slate-800 hover:border-[#0E7490] dark:border-[#243B52] dark:bg-[#0F1B26] dark:text-slate-200'
                     }`}
                   >
                     {d.label}
@@ -468,7 +471,7 @@ export function BookingFlowCard({
           </div>
 
           <div>
-            <p className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-stone-500 dark:text-slate-400">
+            <p className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-slate-500 dark:text-slate-400">
               <Clock className="h-3 w-3" />
               <span>Time slots (1:30 pm – 2:30 pm lunch break blocked)</span>
             </p>
@@ -482,8 +485,8 @@ export function BookingFlowCard({
                     onClick={() => setTimeSlot(slot.label)}
                     className={`min-h-[36px] rounded-lg border px-2 py-1.5 text-xs font-medium tabular-nums transition-colors ${
                       active
-                        ? 'border-[#C84635] bg-[#C84635] text-white'
-                        : 'border-[#E7D8C5] bg-white text-stone-800 hover:border-teal-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
+                        ? 'border-[#0284C7] bg-[#0284C7] text-white'
+                        : 'border-[#CFE3EE] bg-white text-slate-800 hover:border-[#0E7490] dark:border-[#243B52] dark:bg-[#0F1B26] dark:text-slate-200'
                     }`}
                   >
                     {slot.label}
@@ -498,7 +501,7 @@ export function BookingFlowCard({
               type="button"
               disabled={!selectedDate || !timeSlot}
               onClick={() => setStep(4)}
-              className="min-h-[40px] rounded-xl bg-teal-700 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-teal-800 disabled:opacity-45 dark:bg-teal-600"
+              className="min-h-[40px] rounded-xl bg-[#0E7490] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#155E75] disabled:opacity-45 dark:bg-cyan-600"
             >
               Continue
             </button>
@@ -509,12 +512,12 @@ export function BookingFlowCard({
       {/* Step 4: Name & Phone */}
       {step === 4 && (
         <form onSubmit={handleSubmit} className="mt-3 space-y-3">
-          <p className="text-xs font-medium text-stone-700 dark:text-slate-300">
+          <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
             4. Enter your name & phone number
           </p>
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
             <label className="block text-xs">
-              <span className="mb-1 block font-medium text-stone-700 dark:text-slate-300">
+              <span className="mb-1 block font-medium text-slate-700 dark:text-slate-300">
                 Patient Name
               </span>
               <input
@@ -523,11 +526,11 @@ export function BookingFlowCard({
                 value={patientName}
                 onChange={(e) => setPatientName(e.target.value)}
                 placeholder="e.g., Ananya Sharma"
-                className="min-h-[40px] w-full rounded-lg border border-[#E7D8C5] bg-white px-3 py-2 text-base text-stone-900 focus:border-teal-600 focus:outline-none sm:text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                className="min-h-[40px] w-full rounded-lg border border-[#BDD8E7] bg-white px-3 py-2 text-base text-slate-900 focus:border-[#0E7490] focus:outline-none sm:text-xs dark:border-[#243B52] dark:bg-[#0B141C] dark:text-slate-100"
               />
             </label>
             <label className="block text-xs">
-              <span className="mb-1 block font-medium text-stone-700 dark:text-slate-300">
+              <span className="mb-1 block font-medium text-slate-700 dark:text-slate-300">
                 Phone / WhatsApp
               </span>
               <input
@@ -536,7 +539,7 @@ export function BookingFlowCard({
                 value={patientPhone}
                 onChange={(e) => setPatientPhone(e.target.value)}
                 placeholder="e.g., 98490 12345"
-                className="min-h-[40px] w-full rounded-lg border border-[#E7D8C5] bg-white px-3 py-2 text-base tabular-nums text-stone-900 focus:border-teal-600 focus:outline-none sm:text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                className="min-h-[40px] w-full rounded-lg border border-[#BDD8E7] bg-white px-3 py-2 text-base tabular-nums text-slate-900 focus:border-[#0E7490] focus:outline-none sm:text-xs dark:border-[#243B52] dark:bg-[#0B141C] dark:text-slate-100"
               />
             </label>
           </div>
@@ -546,13 +549,13 @@ export function BookingFlowCard({
             </p>
           )}
           <div className="flex items-center justify-between gap-2 pt-1">
-            <p className="text-[11px] text-stone-500 dark:text-slate-400">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
               {selectedDate?.label} at {timeSlot} · {doctorName}
             </p>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="min-h-[40px] rounded-xl bg-[#C84635] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#B23A2A] disabled:opacity-50 whitespace-nowrap"
+              className="min-h-[40px] rounded-xl bg-[#0284C7] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#0369A1] disabled:opacity-50 whitespace-nowrap"
             >
               {isSubmitting ? 'Submitting...' : 'Submit Request'}
             </button>
@@ -563,11 +566,11 @@ export function BookingFlowCard({
       {/* Step 5: Summary Card with Confetti Pop + Add to Calendar */}
       {step === 5 && submittedAppt && (
         <div className="animate-confetti-pop mt-3 space-y-3">
-          <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5 dark:border-emerald-900 dark:bg-emerald-950/40">
+          <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50/80 p-3.5 dark:border-emerald-900 dark:bg-emerald-950/40">
             <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white">
               <CheckCircle2 className="h-5 w-5" />
               <Sparkles
-                className="absolute -right-1.5 -top-1.5 h-4 w-4 text-amber-500"
+                className="absolute -right-1.5 -top-1.5 h-4 w-4 text-sky-400"
                 aria-hidden="true"
               />
             </div>
@@ -590,15 +593,15 @@ export function BookingFlowCard({
             <button
               type="button"
               onClick={() => downloadICS(submittedAppt)}
-              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-[#E7D8C5] bg-white px-3.5 py-2 text-xs font-semibold text-stone-800 transition-colors hover:border-teal-600 hover:text-teal-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-[#CFE3EE] bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 transition-colors hover:border-[#0E7490] hover:text-[#0E7490] dark:border-[#243B52] dark:bg-[#0F1B26] dark:text-slate-100"
             >
-              <CalendarPlus className="h-4 w-4 text-teal-700 dark:text-teal-400" />
+              <CalendarPlus className="h-4 w-4 text-[#0E7490] dark:text-cyan-400" />
               <span>Add to Calendar (.ics)</span>
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="min-h-[40px] rounded-xl bg-teal-700 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600"
+              className="min-h-[40px] rounded-xl bg-[#0E7490] px-4 py-2 text-xs font-semibold text-white hover:bg-[#155E75] dark:bg-cyan-600"
             >
               Done
             </button>

@@ -5,6 +5,7 @@ import {
   Clock,
   CreditCard,
   IndianRupee,
+  Loader2,
   MapPin,
   Mic,
   MicOff,
@@ -22,6 +23,7 @@ import {
 import { CLINIC_DATA } from '../data/clinicData';
 import type {
   AppointmentRequest,
+  AuthSessionState,
   ChatMessage,
   ClinicDoctor,
   CustomerFeedback,
@@ -240,7 +242,64 @@ interface SpeechRecognitionInstance {
   onend: (() => void) | null;
 }
 
-export function PatientChat() {
+function pickBestIndianVoice(
+  voices: SpeechSynthesisVoice[],
+  lang: LanguageCode,
+): SpeechSynthesisVoice | undefined {
+  const lowerMatch = (v: SpeechSynthesisVoice) =>
+    `${v.lang} ${v.name}`.toLowerCase();
+
+  if (lang === 'te') {
+    return (
+      voices.find((v) => /te[-_]in/i.test(v.lang) && /google|shruti|mohan|natural/i.test(v.name)) ||
+      voices.find((v) => /te[-_]in/i.test(v.lang)) ||
+      voices.find((v) => /^te\b/i.test(v.lang) || lowerMatch(v).includes('telugu'))
+    );
+  }
+  if (lang === 'hi') {
+    return (
+      voices.find((v) => /hi[-_]in/i.test(v.lang) && /google|swara|madhur|lekha/i.test(v.name)) ||
+      voices.find((v) => /hi[-_]in/i.test(v.lang)) ||
+      voices.find((v) => /^hi\b/i.test(v.lang) || lowerMatch(v).includes('hindi'))
+    );
+  }
+  return (
+    voices.find((v) => /en[-_]in/i.test(v.lang) && /google|neerja|prabhat|rishi|veena|ravi|heera/i.test(v.name)) ||
+    voices.find((v) => /en[-_]in/i.test(v.lang)) ||
+    voices.find((v) => lowerMatch(v).includes('india')) ||
+    voices.find((v) => /^en/i.test(v.lang))
+  );
+}
+
+function getVoicesReady(): Promise<SpeechSynthesisVoice[]> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      resolve([]);
+      return;
+    }
+    const synth = window.speechSynthesis;
+    const existing = synth.getVoices();
+    if (existing.length > 0) {
+      resolve(existing);
+      return;
+    }
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      synth.removeEventListener?.('voiceschanged', done);
+      resolve(synth.getVoices());
+    };
+    synth.addEventListener?.('voiceschanged', done);
+    window.setTimeout(done, 350);
+  });
+}
+
+interface PatientChatProps {
+  authSession?: AuthSessionState | null;
+}
+
+export function PatientChat({ authSession = null }: PatientChatProps) {
   const [sessionId, setSessionId] = useState<string>(() => getOrCreateSessionId());
   const [language, setLanguage] = useState<LanguageCode>(getInitialLang);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -249,6 +308,7 @@ export function PatientChat() {
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+  const [ttsLoadingMsgId, setTtsLoadingMsgId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [doctors, setDoctors] = useState<ClinicDoctor[]>(INITIAL_DOCTORS);
   const [feedbacks, setFeedbacks] = useState<CustomerFeedback[]>([]);
@@ -262,6 +322,8 @@ export function PatientChat() {
   const askedOnLoadRef = useRef<string | null>(null);
   const isSendingRef = useRef(false);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioCacheRef = useRef<Map<string, string>>(new Map());
 
   const t = UI_TEXT[language];
 
@@ -418,6 +480,10 @@ export function PatientChat() {
       active = false;
       window.clearInterval(interval);
       window.removeEventListener('focus', onFocus);
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
       window.speechSynthesis?.cancel();
     };
   }, [sessionId, fetchMessages, sendQuestion]);
@@ -476,34 +542,128 @@ export function PatientChat() {
     };
 
     recognitionRef.current = rec;
-    setIsListening(true);
-    rec.start();
+    try {
+      setIsListening(true);
+      rec.start();
+    } catch {
+      setIsListening(false);
+      setErrorMsg('Could not start voice input. Please check microphone permissions.');
+    }
   };
 
-  const handleSpeakMessage = (msg: ChatMessage) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    const synth = window.speechSynthesis;
+  const stopAllSpeech = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    try {
+      window.speechSynthesis?.cancel();
+    } catch {
+      // Ignore synthesis cancel errors
+    }
+    setSpeakingMsgId(null);
+    setTtsLoadingMsgId(null);
+  }, []);
 
-    if (speakingMsgId === msg.id) {
-      synth.cancel();
-      setSpeakingMsgId(null);
+  const handleSpeakMessage = async (msg: ChatMessage) => {
+    if (typeof window === 'undefined') return;
+
+    if (speakingMsgId === msg.id || ttsLoadingMsgId === msg.id) {
+      stopAllSpeech();
       return;
     }
 
-    synth.cancel();
-    const utterance = new SpeechSynthesisUtterance(msg.text);
-    const targetLang =
-      msg.language === 'hi' ? 'hi-IN' : msg.language === 'te' ? 'te-IN' : 'en-IN';
-    utterance.lang = targetLang;
-    const voices = synth.getVoices();
-    const matched = voices.find((v) => v.lang.toLowerCase().startsWith(targetLang.slice(0, 2)));
-    if (matched) utterance.voice = matched;
+    stopAllSpeech();
+    const msgLang: LanguageCode =
+      msg.language ?? (/[\u0C00-\u0C7F]/.test(msg.text) ? 'te' : /[\u0900-\u097F]/.test(msg.text) ? 'hi' : language);
+    const cacheKey = `${msg.id}:${msgLang}`;
 
-    utterance.onend = () => setSpeakingMsgId(null);
-    utterance.onerror = () => setSpeakingMsgId(null);
+    const playAudioUrl = async (src: string): Promise<boolean> => {
+      return new Promise((resolve) => {
+        try {
+          const audio = new Audio(src);
+          audioRef.current = audio;
+          audio.onended = () => {
+            if (audioRef.current === audio) audioRef.current = null;
+            setSpeakingMsgId(null);
+          };
+          audio.onerror = () => {
+            if (audioRef.current === audio) audioRef.current = null;
+            setSpeakingMsgId(null);
+            resolve(false);
+          };
+          setSpeakingMsgId(msg.id);
+          audio
+            .play()
+            .then(() => resolve(true))
+            .catch(() => {
+              if (audioRef.current === audio) audioRef.current = null;
+              setSpeakingMsgId(null);
+              resolve(false);
+            });
+        } catch {
+          resolve(false);
+        }
+      });
+    };
 
-    setSpeakingMsgId(msg.id);
-    synth.speak(utterance);
+    // 1. Try cached Indian voice audio first
+    const cached = audioCacheRef.current.get(cacheKey);
+    if (cached) {
+      const ok = await playAudioUrl(cached);
+      if (ok) return;
+    }
+
+    // 2. Try server-side Indian TTS (authentic Indian Telugu te-IN / hi-IN / en-IN voice)
+    setTtsLoadingMsgId(msg.id);
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: msg.text, language: msgLang }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { audioBase64?: string; mimeType?: string };
+        if (data.audioBase64) {
+          const src = `data:${data.mimeType || 'audio/wav'};base64,${data.audioBase64}`;
+          audioCacheRef.current.set(cacheKey, src);
+          setTtsLoadingMsgId(null);
+          const ok = await playAudioUrl(src);
+          if (ok) return;
+        }
+      }
+    } catch {
+      // Fall back cleanly to browser Indian SpeechSynthesis
+    } finally {
+      setTtsLoadingMsgId((curr) => (curr === msg.id ? null : curr));
+    }
+
+    // 3. Browser SpeechSynthesis fallback prioritizing te-IN / hi-IN / en-IN Indian voices
+    if (!('speechSynthesis' in window)) return;
+    try {
+      const synth = window.speechSynthesis;
+      synth.cancel();
+      const voices = await getVoicesReady();
+      const utterance = new SpeechSynthesisUtterance(msg.text);
+      const targetLang = msgLang === 'hi' ? 'hi-IN' : msgLang === 'te' ? 'te-IN' : 'en-IN';
+      utterance.lang = targetLang;
+      utterance.rate = 0.96;
+
+      const matched = pickBestIndianVoice(voices, msgLang);
+      if (matched) {
+        utterance.voice = matched;
+        utterance.lang = matched.lang || targetLang;
+      }
+
+      utterance.onend = () => setSpeakingMsgId(null);
+      utterance.onerror = () => setSpeakingMsgId(null);
+
+      setSpeakingMsgId(msg.id);
+      synth.speak(utterance);
+    } catch {
+      setSpeakingMsgId(null);
+    }
   };
 
   const handleFeedback = async (msgId: string, nextValue: 'up' | 'down') => {
@@ -530,8 +690,7 @@ export function PatientChat() {
   };
 
   const handleNewChat = () => {
-    window.speechSynthesis?.cancel();
-    setSpeakingMsgId(null);
+    stopAllSpeech();
     const nextId =
       typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
         ? crypto.randomUUID()
@@ -606,17 +765,17 @@ export function PatientChat() {
         {/* Primary Chat Workspace */}
         <section
           aria-label="Patient front desk chat"
-          className="flex min-w-0 flex-col rounded-2xl border border-[#EFE2D3] bg-[#FFFDF9] shadow-sm dark:border-slate-800 dark:bg-slate-900"
+          className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[#CFE3EE] bg-white shadow-sm dark:border-[#1E3347] dark:bg-[#111E2B]"
         >
           {/* Chat Header with Mascot & EN | हिंदी | తెలుగు Language Switcher */}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#F2E7DA] px-4 py-3.5 sm:px-5 dark:border-slate-800">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#DCEBF3] bg-[#F4FAFD] px-4 py-3.5 sm:px-5 dark:border-[#1E3347] dark:bg-[#152534]">
             <div className="flex min-w-0 items-center gap-2.5">
               <ToothMascot mood={isSending ? 'thinking' : 'idle'} size="sm" />
               <div className="min-w-0">
-                <h1 className="font-display text-base font-bold text-stone-900 sm:text-lg dark:text-[#FAF5EF]">
+                <h1 className="font-display text-base font-bold text-slate-900 sm:text-lg dark:text-slate-50">
                   FrontDesk AI
                 </h1>
-                <p className="truncate text-xs text-stone-600 dark:text-slate-400">
+                <p className="truncate text-xs text-slate-600 dark:text-slate-300">
                   {t.subtitle}
                 </p>
               </div>
@@ -627,7 +786,7 @@ export function PatientChat() {
               <div
                 role="group"
                 aria-label="Language switcher"
-                className="inline-flex items-center rounded-xl border border-[#E7D8C5] bg-[#FFF9F2] p-0.5 dark:border-slate-700 dark:bg-slate-800"
+                className="inline-flex items-center rounded-xl border border-[#BDD8E7] bg-white p-0.5 dark:border-[#243B52] dark:bg-[#0B141C]"
               >
                 {(['en', 'hi', 'te'] as LanguageCode[]).map((code) => {
                   const active = language === code;
@@ -639,8 +798,8 @@ export function PatientChat() {
                       onClick={() => handleLanguageChange(code)}
                       className={`min-h-[32px] rounded-lg px-2.5 text-xs font-semibold transition-colors whitespace-nowrap ${
                         active
-                          ? 'bg-teal-700 text-white dark:bg-teal-500 dark:text-slate-950'
-                          : 'text-stone-700 hover:text-stone-950 dark:text-slate-300 dark:hover:text-white'
+                          ? 'bg-[#0E7490] text-white dark:bg-cyan-500 dark:text-slate-950'
+                          : 'text-slate-700 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white'
                       }`}
                     >
                       {label}
@@ -653,7 +812,7 @@ export function PatientChat() {
                 <button
                   type="button"
                   onClick={handleNewChat}
-                  className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-[#E7D8C5] bg-white px-2.5 py-1.5 text-xs font-medium text-stone-700 transition-colors hover:bg-[#FFF3E6] whitespace-nowrap shrink-0 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                  className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-[#BDD8E7] bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-[#E8F6FB] whitespace-nowrap shrink-0 dark:border-[#243B52] dark:bg-[#111E2B] dark:text-slate-200 dark:hover:bg-[#192D40]"
                 >
                   <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
                   <span className="hidden sm:inline">New chat</span>
@@ -662,41 +821,41 @@ export function PatientChat() {
             </div>
           </div>
 
-          {/* Calm Emergency Strip */}
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#F4DFD6] bg-[#FFF4EE] px-4 py-2 text-xs text-stone-800 sm:px-5 dark:border-red-950/60 dark:bg-red-950/25 dark:text-red-200">
+          {/* Hospital Triage Emergency Strip */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-red-200/80 bg-[#FEF2F2] px-4 py-2 text-xs text-red-950 sm:px-5 dark:border-red-950/60 dark:bg-red-950/30 dark:text-red-200">
             <span className="flex items-center gap-1.5 font-medium">
               <ShieldAlert
-                className="h-3.5 w-3.5 shrink-0 text-[#C84635] dark:text-red-400"
+                className="h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400"
                 aria-hidden="true"
               />
               <span>{t.emergencyPrompt}</span>
             </span>
             <a
               href={`tel:${CLINIC_DATA.clinic.emergency_phone.replace(/\s+/g, '')}`}
-              className="font-mono font-semibold tabular-nums text-[#B23A2A] underline decoration-[#E5988B] underline-offset-2 hover:text-[#8E2B1E] dark:text-red-300 whitespace-nowrap"
+              className="font-mono font-semibold tabular-nums text-red-700 underline decoration-red-300 underline-offset-2 hover:text-red-900 dark:text-red-300 whitespace-nowrap"
             >
               {t.callNow}
             </a>
           </div>
 
           {/* Message Thread */}
-          <div className="flex min-h-[350px] max-h-[58dvh] flex-col gap-4 overflow-y-auto px-4 py-4 sm:min-h-[430px] sm:px-5 sm:py-5">
+          <div className="flex min-h-[350px] max-h-[58dvh] flex-col gap-4 overflow-y-auto bg-white px-4 py-4 sm:min-h-[430px] sm:px-5 sm:py-5 dark:bg-[#111E2B]">
             {messages.length === 0 ? (
               <div className="flex flex-col gap-4 py-2">
-                <div className="flex items-start gap-3.5 rounded-2xl border border-[#EFE2D3] bg-[#FFF9F2] p-4 shadow-sm dark:border-slate-800 dark:bg-slate-800/60">
+                <div className="flex items-start gap-3.5 rounded-2xl border border-[#CFE3EE] bg-[#F2F9FC] p-4 shadow-xs dark:border-[#1E3347] dark:bg-[#152534]">
                   <ToothMascot mood="wave" size="md" />
                   <div className="min-w-0 flex-1">
-                    <p className="font-display text-sm font-bold text-stone-900 dark:text-slate-50">
-                      Bright Roots Dental Front Desk
+                    <p className="font-display text-sm font-bold text-slate-900 dark:text-slate-50">
+                      Bright Roots Dental Reception Desk
                     </p>
-                    <p className="mt-1 text-sm leading-relaxed text-stone-700 dark:text-slate-300">
+                    <p className="mt-1 text-sm leading-relaxed text-slate-700 dark:text-slate-300">
                       {t.welcome}
                     </p>
                   </div>
                 </div>
 
                 <div>
-                  <p className="mb-2 text-xs font-medium text-stone-500 dark:text-slate-400">
+                  <p className="mb-2 text-xs font-medium text-slate-500 dark:text-slate-400">
                     Quick questions & booking
                   </p>
                   <div className="flex flex-wrap gap-2">
@@ -711,8 +870,8 @@ export function PatientChat() {
                           onClick={() => handleChipClick(chip)}
                           className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-full border px-3.5 py-2 text-left text-xs font-semibold shadow-xs transition-colors disabled:opacity-50 ${
                             isBook
-                              ? 'border-[#C84635] bg-[#C84635] text-white hover:bg-[#B23A2A]'
-                              : 'border-[#E7D8C5] bg-white text-stone-800 hover:border-teal-700 hover:text-teal-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-teal-400 dark:hover:text-teal-300'
+                              ? 'border-[#0284C7] bg-[#0284C7] text-white hover:bg-[#0369A1]'
+                              : 'border-[#CFE3EE] bg-[#F8FCFE] text-slate-800 hover:border-[#0E7490] hover:bg-[#E8F6FB] hover:text-[#0E7490] dark:border-[#243B52] dark:bg-[#152534] dark:text-slate-200 dark:hover:border-cyan-400 dark:hover:text-cyan-300'
                           }`}
                         >
                           <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -728,12 +887,12 @@ export function PatientChat() {
                 if (msg.role === 'patient') {
                   return (
                     <div key={msg.id} className="flex flex-col items-end gap-1">
-                      <div className="flex items-center gap-2 text-xs text-stone-500 dark:text-slate-400">
+                      <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
                         <span>You</span>
                         <span aria-hidden="true">·</span>
                         <span className="tabular-nums">{formatTime(msg.createdAt)}</span>
                       </div>
-                      <div className="max-w-[88%] rounded-2xl bg-teal-700 px-4 py-3 text-sm leading-relaxed text-white shadow-sm break-words sm:max-w-[78%] dark:bg-teal-600">
+                      <div className="max-w-[88%] rounded-2xl bg-[#0E7490] px-4 py-3 text-sm leading-relaxed text-white shadow-sm break-words sm:max-w-[78%] dark:bg-cyan-700">
                         {msg.text}
                       </div>
                     </div>
@@ -743,11 +902,13 @@ export function PatientChat() {
                 const isStaff = msg.role === 'staff';
                 const isUrgent = msg.ticketStatus === 'urgent';
                 const isSpeaking = speakingMsgId === msg.id;
+                const isTtsLoading = ttsLoadingMsgId === msg.id;
+                const msgLang = msg.language ?? (/[\u0C00-\u0C7F]/.test(msg.text) ? 'te' : language);
 
                 return (
                   <div key={msg.id} className="flex flex-col items-start gap-1.5">
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500 dark:text-slate-400">
-                      <span className="font-semibold text-stone-700 dark:text-slate-300">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">
                         {isStaff ? 'Clinic Staff' : 'FrontDesk AI'}
                       </span>
                       {msg.ticketId && (
@@ -765,15 +926,15 @@ export function PatientChat() {
                         isUrgent
                           ? 'border-red-300 bg-red-50 text-red-950 dark:border-red-800 dark:bg-red-950/60 dark:text-red-100'
                           : isStaff
-                            ? 'border-teal-300 bg-teal-50 text-stone-900 dark:border-teal-800 dark:bg-teal-950/40 dark:text-slate-100'
-                            : 'border-[#EFE2D3] bg-[#FFF9F2] text-stone-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100'
+                            ? 'border-emerald-300 bg-[#ECFDF5] text-slate-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-slate-100'
+                            : 'border-[#CFE3EE] bg-[#F5FAFD] text-slate-900 dark:border-[#243B52] dark:bg-[#162736] dark:text-slate-100'
                       }`}
                     >
                       {msg.text}
                     </div>
 
-                    {/* Source badge + Voice reply + Feedback */}
-                    <div className="flex flex-wrap items-center gap-3 pl-1 text-xs text-stone-500 dark:text-slate-400">
+                    {/* Source badge + Indian Voice reply + Feedback */}
+                    <div className="flex flex-wrap items-center gap-3 pl-1 text-xs text-slate-500 dark:text-slate-400">
                       {!isStaff && (
                         <span>
                           {msg.fromFallback ? 'Answered from the clinic file' : 'From clinic file'}
@@ -784,17 +945,37 @@ export function PatientChat() {
                         type="button"
                         onClick={() => handleSpeakMessage(msg)}
                         aria-label={isSpeaking ? t.stopSpeech : t.speakReply}
-                        title={isSpeaking ? t.stopSpeech : t.speakReply}
-                        className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 transition-colors hover:bg-[#F3EAE0] dark:hover:bg-slate-800 ${
-                          isSpeaking ? 'font-semibold text-[#C84635] dark:text-orange-300' : ''
+                        title={
+                          msgLang === 'te'
+                            ? 'Indian Telugu voice (te-IN)'
+                            : msgLang === 'hi'
+                              ? 'Indian Hindi voice (hi-IN)'
+                              : 'Indian English voice (en-IN)'
+                        }
+                        className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 transition-colors hover:bg-[#E8F6FB] dark:hover:bg-[#192D40] ${
+                          isSpeaking || isTtsLoading
+                            ? 'font-semibold text-[#0284C7] dark:text-cyan-300'
+                            : ''
                         }`}
                       >
-                        {isSpeaking ? (
+                        {isTtsLoading ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : isSpeaking ? (
                           <VolumeX className="h-3.5 w-3.5" />
                         ) : (
                           <Volume2 className="h-3.5 w-3.5" />
                         )}
-                        <span>{isSpeaking ? t.stopSpeech : 'Listen'}</span>
+                        <span>
+                          {isTtsLoading
+                            ? 'Loading voice...'
+                            : isSpeaking
+                              ? t.stopSpeech
+                              : msgLang === 'te'
+                                ? 'Listen (Indian Telugu)'
+                                : msgLang === 'hi'
+                                  ? 'Listen (Indian Hindi)'
+                                  : 'Listen'}
+                        </span>
                       </button>
 
                       {!isStaff && !msg.id.startsWith('temp-') && (
@@ -803,10 +984,10 @@ export function PatientChat() {
                             type="button"
                             onClick={() => handleFeedback(msg.id, 'up')}
                             aria-label="Helpful reply"
-                            className={`rounded-md p-1 transition-colors hover:bg-[#F3EAE0] dark:hover:bg-slate-800 ${
+                            className={`rounded-md p-1 transition-colors hover:bg-[#E8F6FB] dark:hover:bg-[#192D40] ${
                               msg.feedback === 'up'
-                                ? 'text-teal-700 dark:text-teal-300'
-                                : 'text-stone-400 dark:text-slate-500'
+                                ? 'text-[#0E7490] dark:text-cyan-300'
+                                : 'text-slate-400 dark:text-slate-500'
                             }`}
                           >
                             <ThumbsUp className="h-3.5 w-3.5" />
@@ -815,10 +996,10 @@ export function PatientChat() {
                             type="button"
                             onClick={() => handleFeedback(msg.id, 'down')}
                             aria-label="Not helpful reply"
-                            className={`rounded-md p-1 transition-colors hover:bg-[#F3EAE0] dark:hover:bg-slate-800 ${
+                            className={`rounded-md p-1 transition-colors hover:bg-[#E8F6FB] dark:hover:bg-[#192D40] ${
                               msg.feedback === 'down'
-                                ? 'text-[#C84635] dark:text-red-400'
-                                : 'text-stone-400 dark:text-slate-500'
+                                ? 'text-red-600 dark:text-red-400'
+                                : 'text-slate-400 dark:text-slate-500'
                             }`}
                           >
                             <ThumbsDown className="h-3.5 w-3.5" />
@@ -834,17 +1015,17 @@ export function PatientChat() {
             {/* Typing Dots Animation */}
             {isSending && (
               <div className="flex flex-col items-start gap-1" aria-live="polite">
-                <span className="text-xs font-semibold text-stone-500 dark:text-slate-400">
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
                   FrontDesk AI
                 </span>
-                <div className="inline-flex items-center gap-1.5 rounded-2xl border border-[#EFE2D3] bg-[#FFF9F2] px-4 py-3 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-                  <span className="h-2 w-2 rounded-full bg-teal-700 animate-typing-dot dark:bg-teal-400" />
+                <div className="inline-flex items-center gap-1.5 rounded-2xl border border-[#CFE3EE] bg-[#F5FAFD] px-4 py-3 shadow-sm dark:border-[#243B52] dark:bg-[#162736]">
+                  <span className="h-2 w-2 rounded-full bg-[#0E7490] animate-typing-dot dark:bg-cyan-400" />
                   <span
-                    className="h-2 w-2 rounded-full bg-teal-700 animate-typing-dot dark:bg-teal-400"
+                    className="h-2 w-2 rounded-full bg-[#0E7490] animate-typing-dot dark:bg-cyan-400"
                     style={{ animationDelay: '0.18s' }}
                   />
                   <span
-                    className="h-2 w-2 rounded-full bg-teal-700 animate-typing-dot dark:bg-teal-400"
+                    className="h-2 w-2 rounded-full bg-[#0E7490] animate-typing-dot dark:bg-cyan-400"
                     style={{ animationDelay: '0.36s' }}
                   />
                 </div>
@@ -876,7 +1057,7 @@ export function PatientChat() {
 
           {/* Contextual Quick-Reply Chips after messages */}
           {messages.length > 0 && !isBookingOpen && (
-            <div className="flex flex-wrap items-center gap-1.5 border-t border-[#F4E9DC] bg-[#FFFBF5] px-4 py-2.5 sm:px-5 dark:border-slate-800 dark:bg-slate-900/70">
+            <div className="flex flex-wrap items-center gap-1.5 border-t border-[#DCEBF3] bg-[#F5FAFD] px-4 py-2.5 sm:px-5 dark:border-[#1E3347] dark:bg-[#152534]">
               {contextualChips.map((chip) => {
                 const Icon = getChipIcon(chip.icon);
                 const isBook = chip.action === 'book';
@@ -888,8 +1069,8 @@ export function PatientChat() {
                     onClick={() => handleChipClick(chip)}
                     className={`inline-flex min-h-[34px] items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-colors disabled:opacity-50 ${
                       isBook
-                        ? 'border-[#C84635] bg-[#C84635] text-white hover:bg-[#B23A2A]'
-                        : 'border-[#E7D8C5] bg-white text-stone-700 hover:border-teal-700 hover:text-teal-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-teal-400'
+                        ? 'border-[#0284C7] bg-[#0284C7] text-white hover:bg-[#0369A1]'
+                        : 'border-[#CFE3EE] bg-white text-slate-700 hover:border-[#0E7490] hover:text-[#0E7490] dark:border-[#243B52] dark:bg-[#0F1B26] dark:text-slate-200 dark:hover:border-cyan-400'
                     }`}
                   >
                     <Icon className="h-3 w-3 shrink-0" aria-hidden="true" />
@@ -908,7 +1089,7 @@ export function PatientChat() {
               </span>
               <a
                 href={`tel:${CLINIC_DATA.clinic.emergency_phone.replace(/\s+/g, '')}`}
-                className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-red-700 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition-colors hover:bg-red-800 whitespace-nowrap"
+                className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-red-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition-colors hover:bg-red-700 whitespace-nowrap"
               >
                 <PhoneCall className="h-3.5 w-3.5" aria-hidden="true" />
                 <span>Call {CLINIC_DATA.clinic.emergency_phone}</span>
@@ -919,12 +1100,12 @@ export function PatientChat() {
           {/* Chat Composer with Voice Mic Input & Send Button */}
           <form
             onSubmit={handleSubmit}
-            className="flex items-center gap-2 border-t border-[#F2E7DA] p-3 sm:p-4 dark:border-slate-800"
+            className="flex items-center gap-2 border-t border-[#DCEBF3] bg-[#F8FCFE] p-3 sm:p-4 dark:border-[#1E3347] dark:bg-[#0F1B26]"
           >
             <label htmlFor="chat-input" className="sr-only">
               Ask a question about Bright Roots Dental
             </label>
-            <div className="flex min-w-0 flex-1 items-center rounded-xl border border-[#DFCEBA] bg-white pr-1.5 focus-within:border-teal-700 focus-within:ring-2 focus-within:ring-teal-700/20 dark:border-slate-700 dark:bg-slate-950 dark:focus-within:border-teal-400">
+            <div className="flex min-w-0 flex-1 items-center rounded-xl border border-[#BDD8E7] bg-white pr-1.5 focus-within:border-[#0E7490] focus-within:ring-2 focus-within:ring-[#0E7490]/20 dark:border-[#243B52] dark:bg-[#0B141C] dark:focus-within:border-cyan-400">
               <input
                 id="chat-input"
                 type="text"
@@ -932,7 +1113,7 @@ export function PatientChat() {
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={isListening ? t.listening : t.placeholder}
                 autoComplete="off"
-                className="min-h-[44px] min-w-0 flex-1 bg-transparent px-3.5 py-2 text-base text-stone-900 placeholder:text-stone-400 focus:outline-none sm:text-sm dark:text-slate-100 dark:placeholder:text-slate-500"
+                className="min-h-[44px] min-w-0 flex-1 bg-transparent px-3.5 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:outline-none sm:text-sm dark:text-slate-100 dark:placeholder:text-slate-500"
               />
               {speechSupported && (
                 <button
@@ -942,8 +1123,8 @@ export function PatientChat() {
                   title={isListening ? 'Stop listening' : 'Speak your question'}
                   className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors ${
                     isListening
-                      ? 'bg-[#C84635] text-white'
-                      : 'text-stone-500 hover:bg-[#F5EADF] hover:text-stone-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
+                      ? 'bg-[#0284C7] text-white'
+                      : 'text-slate-500 hover:bg-[#E8F6FB] hover:text-[#0E7490] dark:text-slate-400 dark:hover:bg-[#152534] dark:hover:text-cyan-300'
                   }`}
                 >
                   {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
@@ -955,7 +1136,7 @@ export function PatientChat() {
               id="chat-send"
               type="submit"
               disabled={isSending || !input.trim()}
-              className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-[#C84635] px-4 py-2 text-sm font-semibold text-white shadow-xs transition-colors hover:bg-[#B23A2A] disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C84635]"
+              className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-[#0E7490] px-4 py-2 text-sm font-semibold text-white shadow-xs transition-colors hover:bg-[#155E75] disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0E7490] dark:bg-cyan-600 dark:hover:bg-cyan-500"
             >
               <span>{t.send}</span>
               <Send className="h-4 w-4" aria-hidden="true" />
@@ -963,8 +1144,13 @@ export function PatientChat() {
           </form>
         </section>
 
-        {/* Clinic Directory with Live Status & Editable Doctor Cards */}
-        <ClinicDirectory doctors={doctors} onDoctorsChange={setDoctors} />
+        {/* Clinic Directory with Live Status & Admin-Editable Doctor Cards */}
+        <ClinicDirectory
+          doctors={doctors}
+          onDoctorsChange={setDoctors}
+          canEdit={authSession?.user.role === 'admin'}
+          authToken={authSession?.token}
+        />
       </div>
     </main>
   );

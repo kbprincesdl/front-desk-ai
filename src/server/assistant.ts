@@ -865,3 +865,97 @@ export async function generateFrontDeskReply(
     return matchClinicFileDeterministic(question, true, lang);
   }
 }
+
+export interface TtsAudioResult {
+  audioBase64: string;
+  mimeType: string;
+  voiceLabel: string;
+}
+
+export async function synthesizeIndianSpeech(
+  rawText: string,
+  language: LanguageCode,
+): Promise<TtsAudioResult | null> {
+  const cleanText = rawText.replace(/\s+/g, ' ').trim().slice(0, 1400);
+  if (!cleanText || !hasWorkingKeyConfigured()) {
+    return null;
+  }
+
+  const styleByLang: Record<LanguageCode, { style: string; voiceLabel: string }> = {
+    te: {
+      style:
+        'Warm, polite South Indian female dental clinic receptionist from Hyderabad speaking natural Indian Telugu (te-IN) with authentic Indian pronunciation and calm clarity.',
+      voiceLabel: 'Indian Telugu (te-IN)',
+    },
+    hi: {
+      style:
+        'Warm, polite Indian female dental clinic receptionist speaking clear, natural Indian Hindi (hi-IN) at a calm pace.',
+      voiceLabel: 'Indian Hindi (hi-IN)',
+    },
+    en: {
+      style:
+        'Warm, polite Indian female dental clinic receptionist speaking clear Indian English (en-IN) at a calm pace.',
+      voiceLabel: 'Indian English (en-IN)',
+    },
+  };
+
+  const selected = styleByLang[language] ?? styleByLang.en;
+
+  try {
+    const ai = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash-lite-tts',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text: cleanText,
+              speechMetadata: {
+                style: selected.style,
+              },
+            },
+          ],
+        },
+      ],
+      config: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Kore' },
+          },
+        },
+        abortSignal: controller.signal,
+      },
+    });
+
+    clearTimeout(timeout);
+
+    const parts = response.candidates?.[0]?.content?.parts ?? [];
+    for (const part of parts) {
+      if (part.inlineData?.data) {
+        return {
+          audioBase64: part.inlineData.data,
+          mimeType: part.inlineData.mimeType || 'audio/wav',
+          voiceLabel: selected.voiceLabel,
+        };
+      }
+    }
+    return null;
+  } catch (err) {
+    console.warn('Gemini TTS failed, falling back to browser Indian voice:', err);
+    return null;
+  }
+}
+

@@ -153,3 +153,27 @@ export interface ClinicData {
   emergency_rules: string;
   bot_rules: string[];
 }
+
+export type UserRole = 'admin' | 'staff';
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  displayName: string;
+  role: UserRole;
+  source?: 'env' | 'store';
+  createdAt?: string;
+}
+
+export interface AuthSessionState {
+  user: AuthUser;
+  token: string;
+}
+
+export interface AuthStatusResponse {
+  adminConfigured: boolean;
+  staffConfigured: boolean;
+  envAdminConfigured: boolean;
+  envStaffConfigured: boolean;
+}
+
