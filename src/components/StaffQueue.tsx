@@ -93,6 +93,42 @@ interface AppointmentCardProps {
   onUpdated: (updated: AppointmentRequest) => void;
 }
 
+const LOCAL_APPT_KEY = 'bright_roots_local_appointments';
+
+function readLocalAppointments(): AppointmentRequest[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_APPT_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as AppointmentRequest[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function updateLocalAppointment(
+  id: string,
+  status: AppointmentStatus,
+  staffNote?: string,
+): AppointmentRequest | null {
+  const list = readLocalAppointments();
+  const idx = list.findIndex((a) => a.id === id);
+  if (idx === -1) return null;
+  const updated: AppointmentRequest = {
+    ...list[idx],
+    status,
+    staffNote: staffNote?.trim() || list[idx].staffNote,
+    updatedAt: new Date().toISOString(),
+  };
+  list[idx] = updated;
+  try {
+    localStorage.setItem(LOCAL_APPT_KEY, JSON.stringify(list));
+  } catch {
+    // Ignore
+  }
+  return updated;
+}
+
 function AppointmentCard({ appt, onUpdated }: AppointmentCardProps) {
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const [noteInput, setNoteInput] = useState('');
@@ -107,11 +143,28 @@ function AppointmentCard({ appt, onUpdated }: AppointmentCardProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, staffNote }),
       });
-      if (!res.ok) return;
-      const data = (await res.json()) as { appointment: AppointmentRequest };
-      setRescheduleOpen(false);
-      setNoteInput('');
-      onUpdated(data.appointment);
+      if (res.ok) {
+        const data = (await res.json()) as { appointment: AppointmentRequest };
+        setRescheduleOpen(false);
+        setNoteInput('');
+        onUpdated(data.appointment);
+        return;
+      }
+      if (res.status === 404 || res.status === 405) {
+        const localUpdated = updateLocalAppointment(appt.id, status, staffNote);
+        if (localUpdated) {
+          setRescheduleOpen(false);
+          setNoteInput('');
+          onUpdated(localUpdated);
+        }
+      }
+    } catch {
+      const localUpdated = updateLocalAppointment(appt.id, status, staffNote);
+      if (localUpdated) {
+        setRescheduleOpen(false);
+        setNoteInput('');
+        onUpdated(localUpdated);
+      }
     } finally {
       setBusy(false);
     }
@@ -442,9 +495,15 @@ export function StaffQueue() {
         const tData = (await tRes.json()) as { tickets?: Ticket[] };
         if (Array.isArray(tData.tickets)) setTickets(tData.tickets);
       }
+      const localAppts = readLocalAppointments();
       if (aRes.ok) {
         const aData = (await aRes.json()) as { appointments?: AppointmentRequest[] };
-        if (Array.isArray(aData.appointments)) setAppointments(aData.appointments);
+        const serverAppts = Array.isArray(aData.appointments) ? aData.appointments : [];
+        const serverIds = new Set(serverAppts.map((a) => a.id));
+        const merged = [...serverAppts, ...localAppts.filter((a) => !serverIds.has(a.id))];
+        setAppointments(merged);
+      } else if (localAppts.length > 0) {
+        setAppointments(localAppts);
       }
       if (dRes.ok) {
         const dData = (await dRes.json()) as { doctors?: ClinicDoctor[] };

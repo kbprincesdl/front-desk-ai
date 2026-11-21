@@ -96,6 +96,51 @@ function getValidDatesForDoctor(
   return results;
 }
 
+const LOCAL_APPT_KEY = 'bright_roots_local_appointments';
+
+function saveLocalAppointmentFallback(payload: {
+  sessionId: string;
+  reason: string;
+  doctorName: string;
+  dateISO: string;
+  dateLabel: string;
+  timeSlot: string;
+  patientName: string;
+  patientPhone: string;
+}): AppointmentRequest {
+  const now = new Date().toISOString();
+  let existing: AppointmentRequest[] = [];
+  try {
+    const raw = localStorage.getItem(LOCAL_APPT_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) existing = parsed as AppointmentRequest[];
+    }
+  } catch {
+    existing = [];
+  }
+  const appt: AppointmentRequest = {
+    id: `APT-${201 + existing.length}`,
+    sessionId: payload.sessionId || 'web-guest',
+    reason: payload.reason,
+    doctorName: payload.doctorName,
+    dateISO: payload.dateISO,
+    dateLabel: payload.dateLabel,
+    timeSlot: payload.timeSlot,
+    patientName: payload.patientName,
+    patientPhone: payload.patientPhone,
+    status: 'Pending',
+    createdAt: now,
+    updatedAt: now,
+  };
+  try {
+    localStorage.setItem(LOCAL_APPT_KEY, JSON.stringify([appt, ...existing]));
+  } catch {
+    // Ignore storage quota errors
+  }
+  return appt;
+}
+
 function downloadICS(appt: AppointmentRequest): void {
   const slotObj = TIME_SLOTS.find((s) => s.label === appt.timeSlot) ?? { hour: 10, minute: 30 };
   const [y, m, d] = appt.dateISO.split('-').map(Number);
@@ -162,9 +207,32 @@ export function BookingFlowCard({
         ? 'అపాయింట్‌మెంట్ అభ్యర్థన'
         : 'Book an Appointment Request';
 
+  const hasPaediatricDoc = useMemo(
+    () =>
+      doctors.some(
+        (d) =>
+          d.name.toLowerCase().includes('sneha') ||
+          d.role.toLowerCase().includes('paediatric') ||
+          d.role.toLowerCase().includes('child'),
+      ),
+    [doctors],
+  );
+
   const handleSelectReason = (opt: ReasonOption) => {
     setReason(opt);
-    setDoctorName(opt.suggestedDoctor);
+    const exactMatch = doctors.find((d) => d.name === opt.suggestedDoctor);
+    const roleMatch =
+      opt.id === 'child'
+        ? doctors.find(
+            (d) =>
+              d.name.toLowerCase().includes('sneha') ||
+              d.role.toLowerCase().includes('paediatric') ||
+              d.role.toLowerCase().includes('child'),
+          )
+        : opt.id === 'braces'
+          ? doctors.find((d) => d.role.toLowerCase().includes('ortho') || d.role.toLowerCase().includes('brace'))
+          : doctors[0];
+    setDoctorName(exactMatch?.name ?? roleMatch?.name ?? doctors[0]?.name ?? opt.suggestedDoctor);
     setSelectedDate(null);
     setTimeSlot('');
     setStep(2);
@@ -187,31 +255,60 @@ export function BookingFlowCard({
       return;
     }
 
+    const payload = {
+      sessionId: sessionId || 'web-guest',
+      reason: reason.label,
+      doctorName,
+      dateISO: selectedDate.dateISO,
+      dateLabel: selectedDate.label,
+      timeSlot,
+      patientName: cleanName,
+      patientPhone: cleanPhone,
+    };
+
     setIsSubmitting(true);
     setError(null);
     try {
       const res = await fetch('/api/appointments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          reason: reason.label,
-          doctorName,
-          dateISO: selectedDate.dateISO,
-          dateLabel: selectedDate.label,
-          timeSlot,
-          patientName: cleanName,
-          patientPhone: cleanPhone,
-        }),
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        throw new Error('Could not submit booking request.');
+
+      if (res.ok) {
+        const data = (await res.json()) as { appointment: AppointmentRequest };
+        setSubmittedAppt(data.appointment);
+        setStep(5);
+        onSubmitted(data.appointment);
+        return;
       }
-      const data = (await res.json()) as { appointment: AppointmentRequest };
-      setSubmittedAppt(data.appointment);
-      setStep(5);
-      onSubmitted(data.appointment);
+
+      // If backend endpoint is not mounted on a static host (404/405), fall back to browser persistence
+      if (res.status === 404 || res.status === 405) {
+        const fallbackAppt = saveLocalAppointmentFallback(payload);
+        setSubmittedAppt(fallbackAppt);
+        setStep(5);
+        onSubmitted(fallbackAppt);
+        return;
+      }
+
+      let serverMsg = 'Could not submit booking request.';
+      try {
+        const errData = (await res.json()) as { error?: string };
+        if (errData?.error) serverMsg = errData.error;
+      } catch {
+        // Non-JSON response
+      }
+      throw new Error(serverMsg);
     } catch (err) {
+      if (err instanceof TypeError) {
+        // Network failure reaching /api/appointments -> save locally so booking isn't lost
+        const fallbackAppt = saveLocalAppointmentFallback(payload);
+        setSubmittedAppt(fallbackAppt);
+        setStep(5);
+        onSubmitted(fallbackAppt);
+        return;
+      }
       setError(err instanceof Error ? err.message : 'Failed to submit request.');
     } finally {
       setIsSubmitting(false);
@@ -292,8 +389,15 @@ export function BookingFlowCard({
           )}
           <div className="space-y-2">
             {doctors.map((doc) => {
-              const isSuggested = doc.name === reason.suggestedDoctor;
-              const disabled = reason.id === 'child' && doc.name !== 'Dr. Sneha Rao';
+              const isPaediatric =
+                doc.name.toLowerCase().includes('sneha') ||
+                doc.role.toLowerCase().includes('paediatric') ||
+                doc.role.toLowerCase().includes('child');
+              const isSuggested =
+                reason.id === 'child'
+                  ? isPaediatric
+                  : doc.name === reason.suggestedDoctor || doc.name === doctorName;
+              const disabled = reason.id === 'child' && hasPaediatricDoc && !isPaediatric;
               return (
                 <button
                   key={doc.id}

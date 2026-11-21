@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { CLINIC_DATA } from '../data/clinicData.ts';
@@ -24,7 +25,23 @@ interface StoreState {
   feedbacks: CustomerFeedback[];
 }
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
+function resolveWritableDataDir(): string {
+  const localDir = path.resolve(process.cwd(), 'data');
+  if (process.env.VERCEL) {
+    return path.join(os.tmpdir(), 'bright-roots-data');
+  }
+  try {
+    if (!fs.existsSync(localDir)) {
+      fs.mkdirSync(localDir, { recursive: true });
+    }
+    fs.accessSync(localDir, fs.constants.W_OK);
+    return localDir;
+  } catch {
+    return path.join(os.tmpdir(), 'bright-roots-data');
+  }
+}
+
+const DATA_DIR = resolveWritableDataDir();
 const STORE_FILE = path.join(DATA_DIR, 'clinic-store.json');
 
 const ALL_WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

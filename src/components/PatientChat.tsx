@@ -168,27 +168,47 @@ function inferChipIcon(label: string): QuickChip['icon'] {
 }
 
 function getOrCreateSessionId(): string {
-  const params = new URLSearchParams(window.location.search);
-  const urlSession = params.get('session')?.trim();
-  if (urlSession) {
-    localStorage.setItem(SESSION_STORAGE_KEY, urlSession);
-    return urlSession;
-  }
-  const existing = localStorage.getItem(SESSION_STORAGE_KEY);
-  if (existing) {
-    return existing;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const urlSession = params.get('session')?.trim();
+    if (urlSession) {
+      try {
+        localStorage.setItem(SESSION_STORAGE_KEY, urlSession);
+      } catch {
+        // Ignore storage write restriction
+      }
+      return urlSession;
+    }
+    try {
+      const existing = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (existing) {
+        return existing;
+      }
+    } catch {
+      // Ignore storage read restriction
+    }
+  } catch {
+    // Ignore URL/storage errors
   }
   const created =
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  localStorage.setItem(SESSION_STORAGE_KEY, created);
+  try {
+    localStorage.setItem(SESSION_STORAGE_KEY, created);
+  } catch {
+    // Ignore storage write restriction
+  }
   return created;
 }
 
 function getInitialLang(): LanguageCode {
-  const saved = localStorage.getItem(LANG_STORAGE_KEY);
-  if (saved === 'hi' || saved === 'te' || saved === 'en') return saved;
+  try {
+    const saved = localStorage.getItem(LANG_STORAGE_KEY);
+    if (saved === 'hi' || saved === 'te' || saved === 'en') return saved;
+  } catch {
+    // Ignore storage read restriction
+  }
   return 'en';
 }
 
@@ -344,7 +364,11 @@ export function PatientChat() {
 
         if (data.botMessage.language && data.botMessage.language !== language) {
           setLanguage(data.botMessage.language);
-          localStorage.setItem(LANG_STORAGE_KEY, data.botMessage.language);
+          try {
+            localStorage.setItem(LANG_STORAGE_KEY, data.botMessage.language);
+          } catch {
+            // Ignore storage write restriction
+          }
         }
       } catch (err) {
         setErrorMsg(
@@ -404,7 +428,11 @@ export function PatientChat() {
 
   const handleLanguageChange = (next: LanguageCode) => {
     setLanguage(next);
-    localStorage.setItem(LANG_STORAGE_KEY, next);
+    try {
+      localStorage.setItem(LANG_STORAGE_KEY, next);
+    } catch {
+      // Ignore storage write restriction
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -508,7 +536,11 @@ export function PatientChat() {
       typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
         ? crypto.randomUUID()
         : `sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    localStorage.setItem(SESSION_STORAGE_KEY, nextId);
+    try {
+      localStorage.setItem(SESSION_STORAGE_KEY, nextId);
+    } catch {
+      // Ignore storage write restriction
+    }
     askedOnLoadRef.current = null;
     setSessionId(nextId);
     setMessages([]);
