@@ -1,8 +1,8 @@
 {
   "rewrites": [
     {
-      "source": "/api/(.*)",
-      "destination": "/api/index?__api_path=$1"
+      "source": "/api/((?!router).*)",
+      "destination": "/api/router?__api_path=$1"
     },
     {
       "source": "/((?!api/|assets/).*)",

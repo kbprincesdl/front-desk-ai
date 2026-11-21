@@ -54,7 +54,14 @@ const VALID_APPT_STATUSES: AppointmentStatus[] = [
 
 export function createApiApp(): Express {
   const app = express();
-  app.use(express.json());
+  const jsonParser = express.json();
+  app.use((req, res, next) => {
+    if (req.body && typeof req.body === 'object') {
+      next();
+      return;
+    }
+    jsonParser(req, res, next);
+  });
 
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ ok: true });
@@ -478,6 +485,10 @@ export function createApiApp(): Express {
   // --- Admin-only Analytics ---
   app.get('/api/analytics', requireAuth(['admin']), (_req: Request, res: Response) => {
     res.json(getAdminAnalytics());
+  });
+
+  app.use('/api/*', (req: Request, res: Response) => {
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.originalUrl}` });
   });
 
   return app;
