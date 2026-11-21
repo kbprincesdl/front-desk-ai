@@ -1,11 +1,19 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import type { ChatMessage, Ticket, TicketStatus } from '../types/clinic.ts';
+import type {
+  AppointmentRequest,
+  AppointmentStatus,
+  ChatMessage,
+  FeedbackValue,
+  Ticket,
+  TicketStatus,
+} from '../types/clinic.ts';
 
 interface StoreState {
   sessions: Record<string, ChatMessage[]>;
   tickets: Ticket[];
+  appointments: AppointmentRequest[];
 }
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -21,12 +29,13 @@ function loadInitialState(): StoreState {
       return {
         sessions: parsed.sessions && typeof parsed.sessions === 'object' ? parsed.sessions : {},
         tickets: Array.isArray(parsed.tickets) ? parsed.tickets : [],
+        appointments: Array.isArray(parsed.appointments) ? parsed.appointments : [],
       };
     }
   } catch (err) {
     console.error('Failed to read store file, starting fresh:', err);
   }
-  return { sessions: {}, tickets: [] };
+  return { sessions: {}, tickets: [], appointments: [] };
 }
 
 function persistState(): void {
@@ -52,6 +61,7 @@ export function appendSessionMessage(
     id: crypto.randomUUID(),
     sessionId,
     createdAt: new Date().toISOString(),
+    feedback: null,
     ...message,
   };
   if (!state.sessions[sessionId]) {
@@ -60,6 +70,20 @@ export function appendSessionMessage(
   state.sessions[sessionId].push(created);
   persistState();
   return created;
+}
+
+export function setMessageFeedback(
+  sessionId: string,
+  messageId: string,
+  feedback: FeedbackValue,
+): ChatMessage | null {
+  const list = state.sessions[sessionId];
+  if (!list) return null;
+  const msg = list.find((m) => m.id === messageId);
+  if (!msg) return null;
+  msg.feedback = feedback;
+  persistState();
+  return msg;
 }
 
 export function createTicket(input: {
@@ -131,4 +155,76 @@ export function updateTicketStatus(ticketId: string, status: TicketStatus): Tick
   ticket.updatedAt = new Date().toISOString();
   persistState();
   return ticket;
+}
+
+export function createAppointment(input: {
+  sessionId: string;
+  reason: string;
+  doctorName: string;
+  dateISO: string;
+  dateLabel: string;
+  timeSlot: string;
+  patientName: string;
+  patientPhone: string;
+}): AppointmentRequest {
+  const now = new Date().toISOString();
+  const num = state.appointments.length + 201;
+  const appt: AppointmentRequest = {
+    id: `APT-${num}`,
+    sessionId: input.sessionId,
+    reason: input.reason,
+    doctorName: input.doctorName,
+    dateISO: input.dateISO,
+    dateLabel: input.dateLabel,
+    timeSlot: input.timeSlot,
+    patientName: input.patientName,
+    patientPhone: input.patientPhone,
+    status: 'Pending',
+    createdAt: now,
+    updatedAt: now,
+  };
+  state.appointments.unshift(appt);
+  persistState();
+  return appt;
+}
+
+export function listAppointments(): AppointmentRequest[] {
+  return [...state.appointments].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+}
+
+export function updateAppointmentDecision(
+  appointmentId: string,
+  status: AppointmentStatus,
+  staffNote?: string,
+): AppointmentRequest | null {
+  const appt = state.appointments.find((a) => a.id === appointmentId);
+  if (!appt) return null;
+
+  appt.status = status;
+  if (staffNote?.trim()) {
+    appt.staffNote = staffNote.trim();
+  }
+  appt.updatedAt = new Date().toISOString();
+
+  let messageText = '';
+  if (status === 'Confirmed') {
+    messageText = `Appointment Confirmed (${appt.id}): ${appt.patientName}, your ${appt.reason} with ${appt.doctorName} on ${appt.dateLabel} at ${appt.timeSlot} is confirmed by our front desk.${appt.staffNote ? ` Note: ${appt.staffNote}` : ''}`;
+  } else if (status === 'Rescheduled') {
+    messageText = `Reschedule Update (${appt.id}): Our front desk proposes rescheduling your ${appt.reason} with ${appt.doctorName}.${appt.staffNote ? ` ${appt.staffNote}` : ' Please call 040 5550 0123 or WhatsApp 98000 00123 to pick a new slot.'}`;
+  } else if (status === 'Rejected') {
+    messageText = `Appointment Update (${appt.id}): We could not accommodate the requested slot for ${appt.dateLabel} at ${appt.timeSlot}.${appt.staffNote ? ` ${appt.staffNote}` : ' Please call 040 5550 0123 or WhatsApp 98000 00123 so our front desk can help.'}`;
+  }
+
+  if (messageText) {
+    appendSessionMessage(appt.sessionId, {
+      role: 'staff',
+      text: messageText,
+      fromFallback: false,
+    });
+  }
+
+  persistState();
+  return appt;
 }

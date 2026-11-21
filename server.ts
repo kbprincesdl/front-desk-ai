@@ -9,17 +9,32 @@ import { generateFrontDeskReply } from './src/server/assistant.ts';
 import {
   addStaffReply,
   appendSessionMessage,
+  createAppointment,
   createTicket,
   getSessionMessages,
+  listAppointments,
   listTickets,
+  setMessageFeedback,
+  updateAppointmentDecision,
   updateTicketStatus,
 } from './src/server/store.ts';
-import type { TicketStatus } from './src/types/clinic.ts';
+import type {
+  AppointmentStatus,
+  FeedbackValue,
+  LanguageCode,
+  TicketStatus,
+} from './src/types/clinic.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const VALID_STATUSES: TicketStatus[] = ['answered', 'needs human', 'urgent', 'closed'];
+const VALID_APPT_STATUSES: AppointmentStatus[] = [
+  'Pending',
+  'Confirmed',
+  'Rescheduled',
+  'Rejected',
+];
 
 async function startServer(): Promise<void> {
   const app = express();
@@ -45,6 +60,10 @@ async function startServer(): Promise<void> {
   app.post('/api/chat', async (req: Request, res: Response) => {
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId.trim() : '';
     const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+    const language =
+      req.body?.language === 'hi' || req.body?.language === 'te' || req.body?.language === 'en'
+        ? (req.body.language as LanguageCode)
+        : undefined;
 
     if (!sessionId || !message) {
       res.status(400).json({ error: 'Both sessionId and message are required.' });
@@ -54,9 +73,10 @@ async function startServer(): Promise<void> {
     const patientMessage = appendSessionMessage(sessionId, {
       role: 'patient',
       text: message,
+      language,
     });
 
-    const result = await generateFrontDeskReply(message);
+    const result = await generateFrontDeskReply(message, language);
 
     const ticket = createTicket({
       sessionId,
@@ -70,6 +90,8 @@ async function startServer(): Promise<void> {
       role: 'bot',
       text: result.reply,
       fromFallback: result.fromFallback,
+      language: result.language,
+      suggestedFollowups: result.suggestedFollowups,
       ticketId: ticket.id,
       ticketStatus: ticket.status,
     });
@@ -79,6 +101,25 @@ async function startServer(): Promise<void> {
       botMessage,
       ticket,
     });
+  });
+
+  app.patch('/api/chat/:sessionId/messages/:messageId/feedback', (req: Request, res: Response) => {
+    const sessionId = String(req.params.sessionId || '').trim();
+    const messageId = String(req.params.messageId || '').trim();
+    const feedback = req.body?.feedback as FeedbackValue;
+
+    if (!sessionId || !messageId || (feedback !== 'up' && feedback !== 'down' && feedback !== null)) {
+      res.status(400).json({ error: 'Invalid feedback payload.' });
+      return;
+    }
+
+    const updated = setMessageFeedback(sessionId, messageId, feedback);
+    if (!updated) {
+      res.status(404).json({ error: 'Message not found.' });
+      return;
+    }
+
+    res.json({ message: updated });
   });
 
   app.get('/api/tickets', (_req: Request, res: Response) => {
@@ -119,6 +160,67 @@ async function startServer(): Promise<void> {
     }
 
     res.json({ ticket: updated });
+  });
+
+  app.get('/api/appointments', (_req: Request, res: Response) => {
+    res.json({ appointments: listAppointments() });
+  });
+
+  app.post('/api/appointments', (req: Request, res: Response) => {
+    const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId.trim() : '';
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+    const doctorName = typeof req.body?.doctorName === 'string' ? req.body.doctorName.trim() : '';
+    const dateISO = typeof req.body?.dateISO === 'string' ? req.body.dateISO.trim() : '';
+    const dateLabel = typeof req.body?.dateLabel === 'string' ? req.body.dateLabel.trim() : '';
+    const timeSlot = typeof req.body?.timeSlot === 'string' ? req.body.timeSlot.trim() : '';
+    const patientName = typeof req.body?.patientName === 'string' ? req.body.patientName.trim() : '';
+    const patientPhone = typeof req.body?.patientPhone === 'string' ? req.body.patientPhone.trim() : '';
+
+    if (
+      !sessionId ||
+      !reason ||
+      !doctorName ||
+      !dateISO ||
+      !dateLabel ||
+      !timeSlot ||
+      !patientName ||
+      !patientPhone
+    ) {
+      res.status(400).json({ error: 'All appointment booking fields are required.' });
+      return;
+    }
+
+    const appointment = createAppointment({
+      sessionId,
+      reason,
+      doctorName,
+      dateISO,
+      dateLabel,
+      timeSlot,
+      patientName,
+      patientPhone,
+    });
+
+    res.json({ appointment });
+  });
+
+  app.patch('/api/appointments/:id', (req: Request, res: Response) => {
+    const id = String(req.params.id || '').trim();
+    const status = req.body?.status as AppointmentStatus;
+    const staffNote = typeof req.body?.staffNote === 'string' ? req.body.staffNote : undefined;
+
+    if (!id || !VALID_APPT_STATUSES.includes(status)) {
+      res.status(400).json({ error: 'Invalid appointment id or status.' });
+      return;
+    }
+
+    const updated = updateAppointmentDecision(id, status, staffNote);
+    if (!updated) {
+      res.status(404).json({ error: 'Appointment request not found.' });
+      return;
+    }
+
+    res.json({ appointment: updated });
   });
 
   const isProd = process.env.NODE_ENV === 'production';

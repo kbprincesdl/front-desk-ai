@@ -50,7 +50,7 @@ export default function App() {
   const isStaffPage = pathname.startsWith('/staff');
 
   return (
-    <div className="min-h-dvh bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <div className="min-h-dvh bg-[#FFF9F2] text-stone-900 dark:bg-[#11161B] dark:text-[#FAF5EF]">
       <Header
         currentPath={pathname}
         onNavigate={navigate}

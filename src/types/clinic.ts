@@ -2,6 +2,10 @@ export type TicketStatus = 'answered' | 'needs human' | 'urgent' | 'closed';
 
 export type MessageRole = 'patient' | 'bot' | 'staff';
 
+export type LanguageCode = 'en' | 'hi' | 'te';
+
+export type FeedbackValue = 'up' | 'down' | null;
+
 export interface ChatMessage {
   id: string;
   sessionId: string;
@@ -9,6 +13,9 @@ export interface ChatMessage {
   text: string;
   createdAt: string;
   fromFallback?: boolean;
+  language?: LanguageCode;
+  suggestedFollowups?: string[];
+  feedback?: FeedbackValue;
   ticketId?: string;
   ticketStatus?: TicketStatus;
 }
@@ -29,6 +36,24 @@ export interface Ticket {
   createdAt: string;
   updatedAt: string;
   staffReplies: StaffReply[];
+}
+
+export type AppointmentStatus = 'Pending' | 'Confirmed' | 'Rescheduled' | 'Rejected';
+
+export interface AppointmentRequest {
+  id: string;
+  sessionId: string;
+  reason: string;
+  doctorName: string;
+  dateISO: string;
+  dateLabel: string;
+  timeSlot: string;
+  patientName: string;
+  patientPhone: string;
+  status: AppointmentStatus;
+  staffNote?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ClinicDoctor {
